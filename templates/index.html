@@ -145,17 +145,31 @@
         let currentWiFiState = false;
         let countdownInterval = null;
         let isInitialLoad = true;
+        let pollingInterval = null;
 
         // Connection status
         socket.on('connect', () => {
             console.log('Connected to server');
             updateConnectionStatus(true);
             socket.emit('get_current_state');
+
+            // Start polling every 2 seconds to catch state changes from GPIO buttons
+            if (pollingInterval) clearInterval(pollingInterval);
+            pollingInterval = setInterval(() => {
+                console.log('Polling for state updates...');
+                socket.emit('get_current_state');
+            }, 2000);
         });
 
         socket.on('disconnect', () => {
             console.log('Disconnected from server');
             updateConnectionStatus(false);
+
+            // Stop polling when disconnected
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
         });
 
         // Current settings (no toast)
