@@ -13,6 +13,7 @@ from flask import Flask, render_template, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit
 from functools import wraps
 from config import CONFIG
+import eventlet
 
 # GPIO Pin Configuration
 BUTTON_PIN_ON = 23
@@ -33,20 +34,32 @@ activity_log = None
 def safe_emit_from_thread(socketio_instance, event, data, namespace='/'):
     """
     Safely emit SocketIO events from any thread (including GPIO thread) to eventlet context.
-    This wraps the emit in a background task to ensure it runs in the eventlet greenlet context.
+    Uses eventlet.spawn to ensure the emit runs in the eventlet hub's context.
     """
     if socketio_instance:
         try:
-            # Use start_background_task to ensure emit happens in eventlet context
-            # This is critical when emitting from regular threads (like GPIO thread)
-            def emit_in_context():
-                socketio_instance.emit(event, data, namespace=namespace)
+            # Capture data for closure
+            event_data = data
+            event_name = event
             
-            socketio_instance.start_background_task(emit_in_context)
+            # Use eventlet.spawn to run emit in eventlet greenlet context
+            # This works even when called from non-eventlet threads
+            def emit_in_greenlet():
+                try:
+                    socketio_instance.emit(event_name, event_data, namespace=namespace)
+                except Exception as inner_e:
+                    print(f"[safe_emit] Error emitting {event_name}: {inner_e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Spawn a greenlet in the eventlet hub to execute the emit
+            eventlet.spawn(emit_in_greenlet)
         except Exception as e:
-            print(f"[safe_emit] Error scheduling emit for {event}: {e}")
+            print(f"[safe_emit] Error spawning greenlet for {event}: {e}")
             import traceback
             traceback.print_exc()
+    else:
+        print(f"[safe_emit] No socketio_instance provided for {event}")
 
 # ============================================================================
 # Thread-Safe State Management Classes
