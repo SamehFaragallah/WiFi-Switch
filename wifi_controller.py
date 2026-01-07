@@ -175,6 +175,11 @@ class SSHController:
 
     def execute_command(self, command):
         """Execute SSH command on remote host"""
+        # Check if SSH is enabled (for testing)
+        if not self.config.get('enabled', True):
+            print(f"[SSHController] SSH disabled (test mode), would execute: {command}")
+            return True, "SSH disabled (test mode)"
+
         try:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -300,9 +305,10 @@ def handle_connect():
             'remaining_minutes': auto_off_timer.get_remaining_seconds() // 60
         })
 
-    # Send current settings
-    emit('settings_updated', {
-        'auto_off_duration_minutes': CONFIG['auto_off']['duration_minutes']
+    # Send current settings without notification
+    emit('current_settings', {
+        'auto_off_duration_minutes': CONFIG['auto_off']['duration_minutes'],
+        'ssh_enabled': CONFIG['ssh'].get('enabled', True)
     })
 
 

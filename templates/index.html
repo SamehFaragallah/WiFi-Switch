@@ -56,8 +56,14 @@
 
             <!-- Settings Card -->
             <div class="bg-white rounded-lg shadow-md p-8">
-                <h2 class="text-2xl font-semibold text-gray-800 mb-6">Settings</h2>
+                <button onclick="toggleSettings()" class="w-full flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-semibold text-gray-800">Settings</h2>
+                    <svg id="settings-arrow" class="w-6 h-6 transform transition-transform" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </button>
 
+                <div id="settings-panel" class="hidden">
                 <!-- Auto-off Duration Setting -->
                 <div class="mb-6">
                     <label for="auto-off-duration" class="block text-gray-700 font-semibold mb-2">
@@ -85,6 +91,16 @@
                     <p class="text-xs text-gray-500 mt-2">
                         Current: <span id="current-auto-off-setting">180</span> minutes (3 hours)
                     </p>
+                </div>
+
+                <!-- SSH Status -->
+                <div class="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <div class="flex items-center gap-2">
+                        <div id="ssh-indicator" class="w-3 h-3 rounded-full bg-green-500"></div>
+                        <span id="ssh-status" class="text-sm font-semibold">SSH Enabled</span>
+                    </div>
+                    <p class="text-xs text-gray-600 mt-1">Set 'ssh.enabled' to False in config.py to disable for testing</p>
+                </div>
                 </div>
 
                 <!-- Connection Status -->
@@ -121,6 +137,7 @@
         const socket = io();
         let currentWiFiState = false;
         let countdownInterval = null;
+        let isInitialLoad = true;
 
         // Connection status
         socket.on('connect', () => {
@@ -134,6 +151,34 @@
             updateConnectionStatus(false);
         });
 
+        // Current settings (no toast)
+        socket.on('current_settings', (data) => {
+            console.log('Current settings:', data);
+            document.getElementById('auto-off-duration').value = data.auto_off_duration_minutes;
+            document.getElementById('current-auto-off-setting').textContent = data.auto_off_duration_minutes;
+            const hours = Math.floor(data.auto_off_duration_minutes / 60);
+            const minutes = data.auto_off_duration_minutes % 60;
+            let timeText = '';
+            if (hours > 0) timeText += `${hours} hour${hours > 1 ? 's' : ''}`;
+            if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
+            document.getElementById('current-auto-off-setting').parentElement.textContent = `Current: ${data.auto_off_duration_minutes} minutes (${timeText})`;
+
+            // Update SSH status
+            const sshIndicator = document.getElementById('ssh-indicator');
+            const sshStatus = document.getElementById('ssh-status');
+            if (data.ssh_enabled) {
+                sshIndicator.classList.remove('bg-gray-400');
+                sshIndicator.classList.add('bg-green-500');
+                sshStatus.textContent = 'SSH Enabled';
+            } else {
+                sshIndicator.classList.remove('bg-green-500');
+                sshIndicator.classList.add('bg-gray-400');
+                sshStatus.textContent = 'SSH Disabled (Test Mode)';
+            }
+
+            isInitialLoad = false;
+        });
+
         // WiFi state changed
         socket.on('wifi_state_changed', (data) => {
             console.log('WiFi state changed:', data);
@@ -141,7 +186,11 @@
             updateWiFiDisplay(data.state);
             updateLastUpdate();
             addActivityLog(`WiFi turned ${data.state ? 'ON' : 'OFF'} (via ${data.source})`);
-            showToast(`WiFi ${data.state ? 'ON' : 'OFF'}`, data.state ? 'success' : 'info');
+
+            // Don't show toast for initial load
+            if (data.source !== 'initial' && !isInitialLoad) {
+                showToast(`WiFi ${data.state ? 'ON' : 'OFF'}`, data.state ? 'success' : 'info');
+            }
         });
 
         // Auto-off countdown
@@ -183,6 +232,19 @@
             const newState = !currentWiFiState;
             console.log('Toggling WiFi to:', newState);
             socket.emit('toggle_wifi', { desired_state: newState });
+        }
+
+        // Toggle settings panel
+        function toggleSettings() {
+            const panel = document.getElementById('settings-panel');
+            const arrow = document.getElementById('settings-arrow');
+            if (panel.classList.contains('hidden')) {
+                panel.classList.remove('hidden');
+                arrow.classList.add('rotate-180');
+            } else {
+                panel.classList.add('hidden');
+                arrow.classList.remove('rotate-180');
+            }
         }
 
         // Update auto-off duration
