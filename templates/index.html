@@ -12,7 +12,14 @@
         <!-- Header -->
         <div class="bg-white rounded-lg shadow-md p-6 mb-6">
             <div class="flex justify-between items-center">
-                <h1 class="text-3xl font-bold text-gray-800">WiFi Controller Dashboard</h1>
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800">WiFi Controller Dashboard</h1>
+                    <div id="ssh-banner" class="hidden mt-2 text-sm">
+                        <span class="bg-yellow-200 text-yellow-800 px-3 py-1 rounded-full font-semibold">
+                            🧪 SSH Test Mode - Commands Not Executed
+                        </span>
+                    </div>
+                </div>
                 <a href="/logout" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200">
                     Logout
                 </a>
@@ -166,14 +173,18 @@
             // Update SSH status
             const sshIndicator = document.getElementById('ssh-indicator');
             const sshStatus = document.getElementById('ssh-status');
+            const sshBanner = document.getElementById('ssh-banner');
+
             if (data.ssh_enabled) {
                 sshIndicator.classList.remove('bg-gray-400');
                 sshIndicator.classList.add('bg-green-500');
                 sshStatus.textContent = 'SSH Enabled';
+                sshBanner.classList.add('hidden');
             } else {
                 sshIndicator.classList.remove('bg-green-500');
                 sshIndicator.classList.add('bg-gray-400');
                 sshStatus.textContent = 'SSH Disabled (Test Mode)';
+                sshBanner.classList.remove('hidden');
             }
 
             isInitialLoad = false;
@@ -185,10 +196,10 @@
             currentWiFiState = data.state;
             updateWiFiDisplay(data.state);
             updateLastUpdate();
-            addActivityLog(`WiFi turned ${data.state ? 'ON' : 'OFF'} (via ${data.source})`);
 
-            // Don't show toast for initial load
-            if (data.source !== 'initial' && !isInitialLoad) {
+            // Don't log or notify for initial/query loads
+            if (data.source !== 'initial' && data.source !== 'query') {
+                addActivityLog(`WiFi turned ${data.state ? 'ON' : 'OFF'} (via ${data.source})`);
                 showToast(`WiFi ${data.state ? 'ON' : 'OFF'}`, data.state ? 'success' : 'info');
             }
         });

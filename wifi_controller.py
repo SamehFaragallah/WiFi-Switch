@@ -211,6 +211,11 @@ class SSHController:
 
     def set_wifi_on(self):
         """Turn WiFi ON via SSH"""
+        # Check if SSH is enabled
+        if not self.config.get('enabled', True):
+            print("[SSHController] SSH disabled (test mode), would turn WiFi ON")
+            return True, "SSH disabled (test mode)"
+
         command = self.config.get('wifi_on_command', '')
         if not command or command.startswith('#'):
             print("[SSHController] WiFi ON command not configured (placeholder)")
@@ -219,6 +224,11 @@ class SSHController:
 
     def set_wifi_off(self):
         """Turn WiFi OFF via SSH"""
+        # Check if SSH is enabled
+        if not self.config.get('enabled', True):
+            print("[SSHController] SSH disabled (test mode), would turn WiFi OFF")
+            return True, "SSH disabled (test mode)"
+
         command = self.config.get('wifi_off_command', '')
         if not command or command.startswith('#'):
             print("[SSHController] WiFi OFF command not configured (placeholder)")
@@ -505,6 +515,12 @@ def main():
     auto_off_timer = AutoOffTimer(callback=auto_off_callback, socketio=socketio)
 
     ssh_controller = SSHController(CONFIG['ssh'])
+
+    # Display SSH status
+    if CONFIG['ssh'].get('enabled', True):
+        print("[Main] SSH: ENABLED - Will execute commands on router")
+    else:
+        print("[Main] SSH: DISABLED (Test Mode) - Commands will be logged but not executed")
 
     socketio_instance = socketio
 
