@@ -65,6 +65,7 @@ class WiFiStateManager:
                 self.activity_log.add_entry(f"WiFi turned {state_text} (via {source_text})", source=source)
 
             # Broadcast to all connected clients
+            # socketio.emit() works cross-thread with eventlet when using broadcast=True
             if self.socketio:
                 try:
                     self.socketio.emit('wifi_state_changed', {
@@ -165,9 +166,12 @@ class AutoOffTimer:
         print("[AutoOffTimer] Timer expired, turning WiFi OFF")
         self._callback()
         if self._socketio:
-            self._socketio.emit('auto_off_triggered', {
-                'timestamp': datetime.now().isoformat()
-            }, broadcast=True, namespace='/')
+            try:
+                self._socketio.emit('auto_off_triggered', {
+                    'timestamp': datetime.now().isoformat()
+                }, broadcast=True, namespace='/')
+            except Exception as e:
+                print(f"[AutoOffTimer] Error emitting auto_off_triggered: {e}")
 
     def _emit_countdown_loop(self):
         """Emit countdown updates every 60 seconds"""
@@ -177,10 +181,13 @@ class AutoOffTimer:
                 break
 
             if self._socketio:
-                self._socketio.emit('auto_off_countdown', {
-                    'remaining_seconds': remaining,
-                    'remaining_minutes': remaining // 60
-                }, broadcast=True, namespace='/')
+                try:
+                    self._socketio.emit('auto_off_countdown', {
+                        'remaining_seconds': remaining,
+                        'remaining_minutes': remaining // 60
+                    }, broadcast=True, namespace='/')
+                except Exception as e:
+                    print(f"[AutoOffTimer] Error emitting countdown: {e}")
 
             time.sleep(60)
 
@@ -522,10 +529,13 @@ def gpio_loop():
                         if state_manager.set_state(True, source='gpio'):
                             success, message = ssh_controller.set_wifi_on()
                             if not success and socketio_instance:
-                                socketio_instance.emit('ssh_error', {
-                                    'error': f'Failed to turn WiFi ON: {message}',
-                                    'timestamp': datetime.now().isoformat()
-                                }, broadcast=True, namespace='/')
+                                try:
+                                    socketio_instance.emit('ssh_error', {
+                                        'error': f'Failed to turn WiFi ON: {message}',
+                                        'timestamp': datetime.now().isoformat()
+                                    }, broadcast=True, namespace='/')
+                                except Exception as e:
+                                    print(f"[GPIO] Error emitting ssh_error: {e}")
 
                             # Start auto-off timer
                             if CONFIG['auto_off']['enabled']:
@@ -548,10 +558,13 @@ def gpio_loop():
                         if state_manager.set_state(False, source='gpio'):
                             success, message = ssh_controller.set_wifi_off()
                             if not success and socketio_instance:
-                                socketio_instance.emit('ssh_error', {
-                                    'error': f'Failed to turn WiFi OFF: {message}',
-                                    'timestamp': datetime.now().isoformat()
-                                }, broadcast=True, namespace='/')
+                                try:
+                                    socketio_instance.emit('ssh_error', {
+                                        'error': f'Failed to turn WiFi OFF: {message}',
+                                        'timestamp': datetime.now().isoformat()
+                                    }, broadcast=True, namespace='/')
+                                except Exception as e:
+                                    print(f"[GPIO] Error emitting ssh_error: {e}")
 
                             # Cancel auto-off timer
                             auto_off_timer.cancel()
@@ -619,9 +632,11 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Start GPIO monitoring as a background task within SocketIO eventlet context
-    # This ensures SocketIO emits from GPIO thread work correctly
-    socketio.start_background_task(gpio_loop)
+    # Start GPIO monitoring in a separate thread
+    # GPIO operations are blocking and should run in a regular thread, not eventlet
+    gpio_thread = threading.Thread(target=gpio_loop)
+    gpio_thread.daemon = True
+    gpio_thread.start()
 
     print(f"[Main] Dashboard starting on {CONFIG['flask']['host']}:{CONFIG['flask']['port']}")
     print(f"[Main] Login credentials: {CONFIG['dashboard']['username']} / {CONFIG['dashboard']['password']}")
