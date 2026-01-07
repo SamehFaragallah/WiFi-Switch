@@ -46,21 +46,25 @@ class WiFiStateManager:
         Set WiFi state and emit SocketIO event if changed
         Returns True if state changed, False otherwise
         """
+        state_changed = False
         with self._lock:
             if self._state != new_state:
                 self._state = new_state
+                state_changed = True
                 print(f"[WiFiStateManager] State changed to {new_state} (source: {source})")
 
-                # Emit SocketIO event if available
-                if self.socketio:
-                    self.socketio.emit('wifi_state_changed', {
-                        'state': new_state,
-                        'source': source,
-                        'timestamp': datetime.now().isoformat()
-                    })
+        # Emit SocketIO event OUTSIDE the lock to avoid blocking
+        if state_changed and self.socketio:
+            try:
+                self.socketio.emit('wifi_state_changed', {
+                    'state': new_state,
+                    'source': source,
+                    'timestamp': datetime.now().isoformat()
+                }, broadcast=True)
+            except Exception as e:
+                print(f"[WiFiStateManager] Error emitting state change: {e}")
 
-                return True
-            return False
+        return state_changed
 
 
 class ButtonCooldownManager:
@@ -350,30 +354,51 @@ def handle_toggle_wifi(data):
     desired_state = data.get('desired_state', False)
     print(f"[SocketIO] Toggle WiFi request: {desired_state}")
 
-    # Update state
-    if state_manager.set_state(desired_state, source='dashboard'):
-        # Execute SSH command
-        if desired_state:
-            success, message = ssh_controller.set_wifi_on()
-            if not success:
-                socketio.emit('ssh_error', {
-                    'error': f'Failed to turn WiFi ON: {message}',
-                    'timestamp': datetime.now().isoformat()
-                })
+    try:
+        print(f"[SocketIO] Setting state to {desired_state}")
+        # Update state
+        if state_manager.set_state(desired_state, source='dashboard'):
+            print(f"[SocketIO] State changed successfully")
+            # Execute SSH command
+            if desired_state:
+                print(f"[SocketIO] Calling set_wifi_on()")
+                success, message = ssh_controller.set_wifi_on()
+                print(f"[SocketIO] set_wifi_on() returned: {success}, {message}")
+                if not success:
+                    emit('ssh_error', {
+                        'error': f'Failed to turn WiFi ON: {message}',
+                        'timestamp': datetime.now().isoformat()
+                    }, broadcast=True)
 
-            # Start auto-off timer
-            if CONFIG['auto_off']['enabled']:
-                auto_off_timer.start(CONFIG['auto_off']['duration_minutes'])
-        else:
-            success, message = ssh_controller.set_wifi_off()
-            if not success:
-                socketio.emit('ssh_error', {
-                    'error': f'Failed to turn WiFi OFF: {message}',
-                    'timestamp': datetime.now().isoformat()
-                })
+                # Start auto-off timer
+                print(f"[SocketIO] Starting auto-off timer")
+                if CONFIG['auto_off']['enabled']:
+                    auto_off_timer.start(CONFIG['auto_off']['duration_minutes'])
+                print(f"[SocketIO] Auto-off timer started")
+            else:
+                print(f"[SocketIO] Calling set_wifi_off()")
+                success, message = ssh_controller.set_wifi_off()
+                print(f"[SocketIO] set_wifi_off() returned: {success}, {message}")
+                if not success:
+                    emit('ssh_error', {
+                        'error': f'Failed to turn WiFi OFF: {message}',
+                        'timestamp': datetime.now().isoformat()
+                    }, broadcast=True)
 
-            # Cancel auto-off timer
-            auto_off_timer.cancel()
+                # Cancel auto-off timer
+                print(f"[SocketIO] Cancelling auto-off timer")
+                auto_off_timer.cancel()
+                print(f"[SocketIO] Auto-off timer cancelled")
+
+        print(f"[SocketIO] Toggle WiFi completed successfully")
+    except Exception as e:
+        print(f"[SocketIO] Error in toggle_wifi: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        emit('ssh_error', {
+            'error': f'Error toggling WiFi: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }, broadcast=True)
 
 
 @socketio.on('update_auto_off_duration')
@@ -390,14 +415,14 @@ def handle_update_auto_off_duration(data):
         with open('config.py', 'w') as f:
             f.write(f"CONFIG = {json.dumps(CONFIG, indent=4)}\n")
 
-        socketio.emit('settings_updated', {
+        emit('settings_updated', {
             'auto_off_duration_minutes': duration_minutes
-        })
+        }, broadcast=True)
     except Exception as e:
-        socketio.emit('ssh_error', {
+        emit('ssh_error', {
             'error': f'Failed to save settings: {str(e)}',
             'timestamp': datetime.now().isoformat()
-        })
+        }, broadcast=True)
 
 
 # ============================================================================
