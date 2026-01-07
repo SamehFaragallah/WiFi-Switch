@@ -161,30 +161,39 @@
         // Current settings (no toast)
         socket.on('current_settings', (data) => {
             console.log('Current settings:', data);
-            document.getElementById('auto-off-duration').value = data.auto_off_duration_minutes;
-            document.getElementById('current-auto-off-setting').textContent = data.auto_off_duration_minutes;
-            const hours = Math.floor(data.auto_off_duration_minutes / 60);
-            const minutes = data.auto_off_duration_minutes % 60;
-            let timeText = '';
-            if (hours > 0) timeText += `${hours} hour${hours > 1 ? 's' : ''}`;
-            if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
-            document.getElementById('current-auto-off-setting').parentElement.textContent = `Current: ${data.auto_off_duration_minutes} minutes (${timeText})`;
+            const durationInput = document.getElementById('auto-off-duration');
+            const currentSetting = document.getElementById('current-auto-off-setting');
+
+            if (durationInput) durationInput.value = data.auto_off_duration_minutes;
+
+            if (currentSetting) {
+                const hours = Math.floor(data.auto_off_duration_minutes / 60);
+                const minutes = data.auto_off_duration_minutes % 60;
+                let timeText = '';
+                if (hours > 0) timeText += `${hours} hour${hours > 1 ? 's' : ''}`;
+                if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
+
+                // Update the span content, not the parent
+                currentSetting.textContent = `${data.auto_off_duration_minutes} minutes (${timeText})`;
+            }
 
             // Update SSH status
             const sshIndicator = document.getElementById('ssh-indicator');
             const sshStatus = document.getElementById('ssh-status');
             const sshBanner = document.getElementById('ssh-banner');
 
-            if (data.ssh_enabled) {
-                sshIndicator.classList.remove('bg-gray-400');
-                sshIndicator.classList.add('bg-green-500');
-                sshStatus.textContent = 'SSH Enabled';
-                sshBanner.classList.add('hidden');
-            } else {
-                sshIndicator.classList.remove('bg-green-500');
-                sshIndicator.classList.add('bg-gray-400');
-                sshStatus.textContent = 'SSH Disabled (Test Mode)';
-                sshBanner.classList.remove('hidden');
+            if (sshIndicator && sshStatus && sshBanner) {
+                if (data.ssh_enabled) {
+                    sshIndicator.classList.remove('bg-gray-400');
+                    sshIndicator.classList.add('bg-green-500');
+                    sshStatus.textContent = 'SSH Enabled';
+                    sshBanner.classList.add('hidden');
+                } else {
+                    sshIndicator.classList.remove('bg-green-500');
+                    sshIndicator.classList.add('bg-gray-400');
+                    sshStatus.textContent = 'SSH Disabled (Test Mode)';
+                    sshBanner.classList.remove('hidden');
+                }
             }
 
             isInitialLoad = false;
@@ -268,13 +277,19 @@
         // Settings updated
         socket.on('settings_updated', (data) => {
             console.log('Settings updated:', data);
-            document.getElementById('current-auto-off-setting').textContent = data.auto_off_duration_minutes;
-            const hours = Math.floor(data.auto_off_duration_minutes / 60);
-            const minutes = data.auto_off_duration_minutes % 60;
-            let timeText = '';
-            if (hours > 0) timeText += `${hours} hour${hours > 1 ? 's' : ''}`;
-            if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
-            document.getElementById('current-auto-off-setting').parentElement.textContent = `Current: ${data.auto_off_duration_minutes} minutes (${timeText})`;
+            const currentSetting = document.getElementById('current-auto-off-setting');
+
+            if (currentSetting) {
+                const hours = Math.floor(data.auto_off_duration_minutes / 60);
+                const minutes = data.auto_off_duration_minutes % 60;
+                let timeText = '';
+                if (hours > 0) timeText += `${hours} hour${hours > 1 ? 's' : ''}`;
+                if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
+
+                // Update the span content, not the parent
+                currentSetting.textContent = `${data.auto_off_duration_minutes} minutes (${timeText})`;
+            }
+
             showToast(`Settings saved: ${data.auto_off_duration_minutes} minutes`, 'success');
         });
 
