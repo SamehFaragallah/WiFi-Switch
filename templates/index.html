@@ -190,6 +190,56 @@
             isInitialLoad = false;
         });
 
+        // Activity log history (on connect)
+        socket.on('activity_log_history', (data) => {
+            console.log('Activity log history received:', data);
+            const logContainer = document.getElementById('activity-log');
+            logContainer.innerHTML = ''; // Clear placeholder
+
+            if (data.entries && data.entries.length > 0) {
+                // Display entries in reverse order (newest first)
+                data.entries.reverse().forEach(entry => {
+                    const entryDiv = document.createElement('div');
+                    entryDiv.className = 'flex items-start gap-2 text-sm p-2 rounded';
+                    const time = new Date(entry.timestamp).toLocaleTimeString();
+                    entryDiv.innerHTML = `
+                        <span class="text-gray-400">${time}</span>
+                        <span class="text-gray-600">${entry.message}</span>
+                    `;
+                    logContainer.appendChild(entryDiv);
+                });
+            } else {
+                logContainer.innerHTML = '<p class="text-gray-500 text-sm">No activity yet...</p>';
+            }
+        });
+
+        // Activity log new entry (broadcast to all clients)
+        socket.on('activity_log_entry', (entry) => {
+            console.log('New activity log entry:', entry);
+            const logContainer = document.getElementById('activity-log');
+
+            // Clear placeholder if exists
+            if (logContainer.querySelector('.text-gray-500')) {
+                logContainer.innerHTML = '';
+            }
+
+            const entryDiv = document.createElement('div');
+            entryDiv.className = 'flex items-start gap-2 text-sm p-2 rounded';
+            const time = new Date(entry.timestamp).toLocaleTimeString();
+            entryDiv.innerHTML = `
+                <span class="text-gray-400">${time}</span>
+                <span class="text-gray-600">${entry.message}</span>
+            `;
+
+            // Insert at top (newest first)
+            logContainer.insertBefore(entryDiv, logContainer.firstChild);
+
+            // Keep only last 25 entries
+            while (logContainer.children.length > 25) {
+                logContainer.removeChild(logContainer.lastChild);
+            }
+        });
+
         // WiFi state changed
         socket.on('wifi_state_changed', (data) => {
             console.log('WiFi state changed:', data);
@@ -197,9 +247,8 @@
             updateWiFiDisplay(data.state);
             updateLastUpdate();
 
-            // Don't log or notify for initial/query loads
+            // Show toast for real actions (not initial/query loads)
             if (data.source !== 'initial' && data.source !== 'query') {
-                addActivityLog(`WiFi turned ${data.state ? 'ON' : 'OFF'} (via ${data.source})`);
                 showToast(`WiFi ${data.state ? 'ON' : 'OFF'}`, data.state ? 'success' : 'info');
             }
         });
@@ -214,7 +263,6 @@
         socket.on('auto_off_triggered', (data) => {
             console.log('Auto-off triggered');
             showToast('WiFi automatically turned OFF (timer expired)', 'warning');
-            addActivityLog('WiFi automatically turned OFF (timer expired)');
         });
 
         // Settings updated
@@ -228,7 +276,6 @@
             if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
             document.getElementById('current-auto-off-setting').parentElement.textContent = `Current: ${data.auto_off_duration_minutes} minutes (${timeText})`;
             showToast(`Settings saved: ${data.auto_off_duration_minutes} minutes`, 'success');
-            addActivityLog(`Auto-off duration updated to ${data.auto_off_duration_minutes} minutes`);
         });
 
         // SSH errors
@@ -394,9 +441,6 @@
                 }, 300);
             }, 4000);
         }
-
-        // Initialize
-        addActivityLog('Dashboard loaded');
     </script>
 </body>
 </html>

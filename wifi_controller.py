@@ -23,6 +23,7 @@ cooldown_manager = None
 auto_off_timer = None
 ssh_controller = None
 socketio_instance = None
+activity_log = None
 
 # ============================================================================
 # Thread-Safe State Management Classes
@@ -35,6 +36,7 @@ class WiFiStateManager:
         self._state = False
         self._lock = threading.RLock()
         self.socketio = None
+        self.activity_log = None
 
     def get_state(self):
         """Get current WiFi state"""
@@ -53,16 +55,28 @@ class WiFiStateManager:
                 state_changed = True
                 print(f"[WiFiStateManager] State changed to {new_state} (source: {source})")
 
-        # Emit SocketIO event OUTSIDE the lock to avoid blocking
-        if state_changed and self.socketio:
-            try:
-                self.socketio.emit('wifi_state_changed', {
-                    'state': new_state,
-                    'source': source,
-                    'timestamp': datetime.now().isoformat()
-                })
-            except Exception as e:
-                print(f"[WiFiStateManager] Error emitting state change: {e}")
+        # Emit SocketIO event and log activity OUTSIDE the lock to avoid blocking
+        if state_changed:
+            state_text = "ON" if new_state else "OFF"
+            source_text = "physical button" if source == "gpio" else "dashboard"
+
+            # Add to activity log (only for real actions, not initial/query)
+            if source not in ['initial', 'query'] and self.activity_log:
+                self.activity_log.add_entry(f"WiFi turned {state_text} (via {source_text})", source=source)
+
+            # Broadcast to all connected clients
+            if self.socketio:
+                try:
+                    self.socketio.emit('wifi_state_changed', {
+                        'state': new_state,
+                        'source': source,
+                        'timestamp': datetime.now().isoformat()
+                    }, namespace='/', broadcast=True)
+                    print(f"[WiFiStateManager] Broadcasted state change to all clients")
+                except Exception as e:
+                    print(f"[WiFiStateManager] Error emitting state change: {e}")
+                    import traceback
+                    traceback.print_exc()
 
         return state_changed
 
@@ -240,6 +254,43 @@ class SSHController:
         return self.execute_command(command)
 
 
+class ActivityLog:
+    """Manages global activity log with persistence across client connections"""
+
+    def __init__(self, max_entries=25, socketio=None):
+        self._max_entries = max_entries
+        self._entries = []
+        self._lock = threading.RLock()
+        self._socketio = socketio
+
+    def add_entry(self, message, source="system"):
+        """Add an entry to the activity log and broadcast to all clients"""
+        entry = None
+        with self._lock:
+            entry = {
+                'message': message,
+                'source': source,
+                'timestamp': datetime.now().isoformat()
+            }
+            self._entries.append(entry)
+            # Keep only last max_entries
+            if len(self._entries) > self._max_entries:
+                self._entries = self._entries[-self._max_entries:]
+            print(f"[ActivityLog] {message}")
+
+        # Broadcast to all clients OUTSIDE the lock
+        if entry and self._socketio:
+            try:
+                self._socketio.emit('activity_log_entry', entry, namespace='/', broadcast=True)
+            except Exception as e:
+                print(f"[ActivityLog] Error broadcasting entry: {e}")
+
+    def get_entries(self):
+        """Get all log entries"""
+        with self._lock:
+            return list(self._entries)
+
+
 # ============================================================================
 # Flask Application Setup
 # ============================================================================
@@ -324,6 +375,12 @@ def handle_connect():
         'auto_off_duration_minutes': CONFIG['auto_off']['duration_minutes'],
         'ssh_enabled': CONFIG['ssh'].get('enabled', True)
     })
+
+    # Send activity log history
+    if activity_log:
+        emit('activity_log_history', {
+            'entries': activity_log.get_entries()
+        })
 
 
 @socketio.on('disconnect')
@@ -414,6 +471,10 @@ def handle_update_auto_off_duration(data):
     try:
         with open('config.py', 'w') as f:
             f.write(f"CONFIG = {json.dumps(CONFIG, indent=4)}\n")
+
+        # Add to activity log
+        if activity_log:
+            activity_log.add_entry(f"Auto-off duration updated to {duration_minutes} minutes", source="dashboard")
 
         emit('settings_updated', {
             'auto_off_duration_minutes': duration_minutes
@@ -513,6 +574,8 @@ def auto_off_callback():
     print("[Main] Auto-off timer expired, turning WiFi OFF")
     state_manager.set_state(False, source='auto-off')
     ssh_controller.set_wifi_off()
+    if activity_log:
+        activity_log.add_entry("WiFi automatically turned OFF (timer expired)", source="auto-off")
 
 
 def signal_handler(sig, frame):
@@ -525,15 +588,18 @@ def signal_handler(sig, frame):
 
 def main():
     """Main application entry point"""
-    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance
+    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log
 
     print("=" * 60)
     print("WiFi Controller Dashboard")
     print("=" * 60)
 
     # Initialize components
+    activity_log = ActivityLog(max_entries=25, socketio=socketio)
+
     state_manager = WiFiStateManager()
     state_manager.socketio = socketio
+    state_manager.activity_log = activity_log
 
     cooldown_manager = ButtonCooldownManager(cooldown_seconds=5)
 
