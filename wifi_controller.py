@@ -21,6 +21,9 @@ BUTTON_PIN_OFF = 24
 # Event queue for thread-safe communication between GPIO thread and SocketIO
 event_queue = queue.Queue()
 
+# Flag to track if event processor has been started
+event_processor_started = False
+
 # Global instances (will be initialized in main)
 state_manager = None
 cooldown_manager = None
@@ -361,6 +364,14 @@ def index():
 @socketio.on('connect')
 def handle_connect():
     """Client connected"""
+    global event_processor_started
+
+    # Start event processor on first client connection
+    if not event_processor_started:
+        socketio.start_background_task(process_event_queue)
+        event_processor_started = True
+        print("[SocketIO] Event queue processor started")
+
     print(f"[SocketIO] Client connected")
     # Send current state immediately
     emit('wifi_state_changed', {
@@ -697,13 +708,9 @@ def main():
     gpio_thread.daemon = True
     gpio_thread.start()
 
-    # Start event queue processing in SocketIO background task
-    # This runs in the eventlet context and safely emits SocketIO events
-    socketio.start_background_task(process_event_queue)
-    print("[Main] Event queue processing started")
-
     print(f"[Main] Dashboard starting on {CONFIG['flask']['host']}:{CONFIG['flask']['port']}")
     print(f"[Main] Login credentials: {CONFIG['dashboard']['username']} / {CONFIG['dashboard']['password']}")
+    print("[Main] Event queue processor will start on first client connection")
     print("[Main] Press Ctrl+C to stop")
 
     # Start Flask-SocketIO server
