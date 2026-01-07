@@ -66,14 +66,14 @@ class WiFiStateManager:
                 self.activity_log.add_entry(f"WiFi turned {state_text} (via {source_text})", source=source)
 
             # Broadcast to all connected clients
-            # socketio.emit() works cross-thread with eventlet when using broadcast=True
+            # Omit 'to' parameter to broadcast to all clients
             if self.socketio:
                 try:
                     self.socketio.emit('wifi_state_changed', {
                         'state': new_state,
                         'source': source,
                         'timestamp': datetime.now().isoformat()
-                    }, broadcast=True, namespace='/')
+                    }, namespace='/')
                     print(f"[WiFiStateManager] Broadcasted state change to all clients")
                 except Exception as e:
                     print(f"[WiFiStateManager] Error emitting state change: {e}")
@@ -170,7 +170,7 @@ class AutoOffTimer:
             try:
                 self._socketio.emit('auto_off_triggered', {
                     'timestamp': datetime.now().isoformat()
-                }, broadcast=True, namespace='/')
+                }, namespace='/')
             except Exception as e:
                 print(f"[AutoOffTimer] Error emitting auto_off_triggered: {e}")
 
@@ -186,7 +186,7 @@ class AutoOffTimer:
                     self._socketio.emit('auto_off_countdown', {
                         'remaining_seconds': remaining,
                         'remaining_minutes': remaining // 60
-                    }, broadcast=True, namespace='/')
+                    }, namespace='/')
                 except Exception as e:
                     print(f"[AutoOffTimer] Error emitting countdown: {e}")
 
@@ -321,10 +321,10 @@ class ActivityLog:
             print(f"[ActivityLog] Error saving entry: {e}")
 
         # Broadcast to all clients OUTSIDE the lock
-        # socketio.emit() works cross-thread with eventlet when using broadcast=True
+        # Omit 'to' parameter to broadcast to all clients
         if entry and self._socketio:
             try:
-                self._socketio.emit('activity_log_entry', entry, broadcast=True, namespace='/')
+                self._socketio.emit('activity_log_entry', entry, namespace='/')
             except Exception as e:
                 print(f"[ActivityLog] Error broadcasting entry: {e}")
                 import traceback
@@ -470,7 +470,7 @@ def handle_toggle_wifi(data):
                     emit('ssh_error', {
                         'error': f'Failed to turn WiFi ON: {message}',
                         'timestamp': datetime.now().isoformat()
-                    }, broadcast=True)
+                    })
 
                 # Start auto-off timer
                 print(f"[SocketIO] Starting auto-off timer")
@@ -485,7 +485,7 @@ def handle_toggle_wifi(data):
                     emit('ssh_error', {
                         'error': f'Failed to turn WiFi OFF: {message}',
                         'timestamp': datetime.now().isoformat()
-                    }, broadcast=True)
+                    })
 
                 # Cancel auto-off timer
                 print(f"[SocketIO] Cancelling auto-off timer")
@@ -500,7 +500,7 @@ def handle_toggle_wifi(data):
         emit('ssh_error', {
             'error': f'Error toggling WiFi: {str(e)}',
             'timestamp': datetime.now().isoformat()
-        }, broadcast=True)
+        })
 
 
 @socketio.on('update_auto_off_duration')
@@ -521,14 +521,15 @@ def handle_update_auto_off_duration(data):
         if activity_log:
             activity_log.add_entry(f"Auto-off duration updated to {duration_minutes} minutes", source="dashboard")
 
-        emit('settings_updated', {
+        # Broadcast settings update to all clients
+        socketio.emit('settings_updated', {
             'auto_off_duration_minutes': duration_minutes
-        }, broadcast=True)
+        }, namespace='/')
     except Exception as e:
         emit('ssh_error', {
             'error': f'Failed to save settings: {str(e)}',
             'timestamp': datetime.now().isoformat()
-        }, broadcast=True)
+        })
 
 
 # ============================================================================
@@ -571,7 +572,7 @@ def gpio_loop():
                                     socketio_instance.emit('ssh_error', {
                                         'error': f'Failed to turn WiFi ON: {message}',
                                         'timestamp': datetime.now().isoformat()
-                                    }, broadcast=True, namespace='/')
+                                    }, namespace='/')
                                 except Exception as e:
                                     print(f"[GPIO] Error emitting ssh_error: {e}")
 
@@ -600,7 +601,7 @@ def gpio_loop():
                                     socketio_instance.emit('ssh_error', {
                                         'error': f'Failed to turn WiFi OFF: {message}',
                                         'timestamp': datetime.now().isoformat()
-                                    }, broadcast=True, namespace='/')
+                                    }, namespace='/')
                                 except Exception as e:
                                     print(f"[GPIO] Error emitting ssh_error: {e}")
 
