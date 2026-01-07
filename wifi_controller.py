@@ -71,7 +71,7 @@ class WiFiStateManager:
                         'state': new_state,
                         'source': source,
                         'timestamp': datetime.now().isoformat()
-                    }, namespace='/', broadcast=True)
+                    }, namespace='/')
                     print(f"[WiFiStateManager] Broadcasted state change to all clients")
                 except Exception as e:
                     print(f"[WiFiStateManager] Error emitting state change: {e}")
@@ -281,7 +281,7 @@ class ActivityLog:
         # Broadcast to all clients OUTSIDE the lock
         if entry and self._socketio:
             try:
-                self._socketio.emit('activity_log_entry', entry, namespace='/', broadcast=True)
+                self._socketio.emit('activity_log_entry', entry, namespace='/')
             except Exception as e:
                 print(f"[ActivityLog] Error broadcasting entry: {e}")
 
