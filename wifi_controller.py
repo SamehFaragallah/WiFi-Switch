@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit
 from functools import wraps
-import bcrypt
 from config import CONFIG
 
 # GPIO Pin Configuration
@@ -253,9 +252,9 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
 
-        # Validate credentials
+        # Validate credentials (plain password comparison)
         if (username == CONFIG['dashboard']['username'] and
-            bcrypt.checkpw(password.encode('utf-8'), CONFIG['dashboard']['password_hash'].encode('utf-8'))):
+            password == CONFIG['dashboard']['password']):
             session['authenticated'] = True
             session.permanent = True
             return redirect(url_for('index'))
