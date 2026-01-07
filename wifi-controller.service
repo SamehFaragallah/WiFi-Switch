@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/WiFi-Switch
-ExecStart=/home/pi/WiFi-Switch/venv/bin/python3 /home/pi/WiFi-Switch/wifi_controller.py
+WorkingDirectory=/home/pi/Desktop/WiFi-Switch
+ExecStart=/home/pi/Desktop/WiFi-Switch/venv/bin/python3 /home/pi/Desktop/WiFi-Switch/wifi_controller.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
