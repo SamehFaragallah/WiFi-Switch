@@ -33,7 +33,7 @@ class WiFiStateManager:
 
     def __init__(self):
         self._state = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.socketio = None
 
     def get_state(self):
@@ -73,7 +73,7 @@ class ButtonCooldownManager:
     def __init__(self, cooldown_seconds=5):
         self._cooldown_seconds = cooldown_seconds
         self._last_press = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def can_press(self, pin):
         """Check if button can be pressed (cooldown expired)"""
@@ -102,7 +102,7 @@ class AutoOffTimer:
     def __init__(self, callback, socketio=None):
         self._timer = None
         self._end_time = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._callback = callback
         self._socketio = socketio
         self._countdown_thread = None
