@@ -1,0 +1,17 @@
+[Unit]
+Description=WiFi Controller with Dashboard
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/WiFi-Switch
+ExecStart=/home/pi/WiFi-Switch/venv/bin/python3 /home/pi/WiFi-Switch/wifi_controller.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+config.py
+venv/
+__pycache__/
+*.pyc
+*.log
+.env
+*.swp
+*.swo
+.DS_Store

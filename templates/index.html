@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi Controller Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex justify-between items-center">
+                <h1 class="text-3xl font-bold text-gray-800">WiFi Controller Dashboard</h1>
+                <a href="/logout" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    Logout
+                </a>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- WiFi Status Card -->
+            <div class="bg-white rounded-lg shadow-md p-8">
+                <h2 class="text-2xl font-semibold text-gray-800 mb-6">WiFi Status</h2>
+
+                <!-- State Indicator -->
+                <div class="text-center mb-8">
+                    <div id="wifi-status-circle" class="w-32 h-32 rounded-full mx-auto mb-4 flex items-center justify-center transition-all duration-500">
+                        <svg id="wifi-icon" class="w-16 h-16" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+                            <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                        </svg>
+                    </div>
+                    <h3 id="wifi-status-text" class="text-3xl font-bold mb-2">OFF</h3>
+                    <p id="wifi-status-subtitle" class="text-gray-600">WiFi is currently disabled</p>
+                </div>
+
+                <!-- Toggle Button -->
+                <div class="text-center mb-6">
+                    <button
+                        id="wifi-toggle-btn"
+                        onclick="toggleWiFi()"
+                        class="px-8 py-4 rounded-lg font-semibold text-white text-lg transition-all duration-200 transform hover:scale-105 shadow-lg"
+                    >
+                        Turn ON
+                    </button>
+                </div>
+
+                <!-- Auto-off Countdown -->
+                <div id="countdown-container" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+                    <p class="text-sm text-gray-600 mb-1">Auto-off in</p>
+                    <p id="countdown-display" class="text-2xl font-bold text-blue-600">0h 0m</p>
+                </div>
+            </div>
+
+            <!-- Settings Card -->
+            <div class="bg-white rounded-lg shadow-md p-8">
+                <h2 class="text-2xl font-semibold text-gray-800 mb-6">Settings</h2>
+
+                <!-- Auto-off Duration Setting -->
+                <div class="mb-6">
+                    <label for="auto-off-duration" class="block text-gray-700 font-semibold mb-2">
+                        Auto-off Duration (minutes)
+                    </label>
+                    <p class="text-sm text-gray-600 mb-3">
+                        WiFi will automatically turn off after this duration when turned on.
+                    </p>
+                    <div class="flex items-center gap-3">
+                        <input
+                            type="number"
+                            id="auto-off-duration"
+                            min="1"
+                            max="1440"
+                            value="180"
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                        <button
+                            onclick="updateAutoOffDuration()"
+                            class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition duration-200"
+                        >
+                            Save
+                        </button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">
+                        Current: <span id="current-auto-off-setting">180</span> minutes (3 hours)
+                    </p>
+                </div>
+
+                <!-- Connection Status -->
+                <div class="border-t pt-6">
+                    <h3 class="font-semibold text-gray-700 mb-3">Connection Status</h3>
+                    <div class="flex items-center gap-2">
+                        <div id="connection-indicator" class="w-3 h-3 rounded-full bg-gray-400"></div>
+                        <span id="connection-status" class="text-sm text-gray-600">Connecting...</span>
+                    </div>
+                </div>
+
+                <!-- Last Update -->
+                <div class="mt-4">
+                    <p class="text-xs text-gray-500">
+                        Last update: <span id="last-update">--</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="bg-white rounded-lg shadow-md p-6 mt-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Activity Log</h2>
+            <div id="activity-log" class="space-y-2 max-h-64 overflow-y-auto">
+                <p class="text-gray-500 text-sm">Waiting for events...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+    <script>
+        const socket = io();
+        let currentWiFiState = false;
+        let countdownInterval = null;
+
+        // Connection status
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            updateConnectionStatus(true);
+            socket.emit('get_current_state');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            updateConnectionStatus(false);
+        });
+
+        // WiFi state changed
+        socket.on('wifi_state_changed', (data) => {
+            console.log('WiFi state changed:', data);
+            currentWiFiState = data.state;
+            updateWiFiDisplay(data.state);
+            updateLastUpdate();
+            addActivityLog(`WiFi turned ${data.state ? 'ON' : 'OFF'} (via ${data.source})`);
+            showToast(`WiFi ${data.state ? 'ON' : 'OFF'}`, data.state ? 'success' : 'info');
+        });
+
+        // Auto-off countdown
+        socket.on('auto_off_countdown', (data) => {
+            console.log('Countdown update:', data);
+            updateCountdownDisplay(data.remaining_minutes);
+        });
+
+        // Auto-off triggered
+        socket.on('auto_off_triggered', (data) => {
+            console.log('Auto-off triggered');
+            showToast('WiFi automatically turned OFF (timer expired)', 'warning');
+            addActivityLog('WiFi automatically turned OFF (timer expired)');
+        });
+
+        // Settings updated
+        socket.on('settings_updated', (data) => {
+            console.log('Settings updated:', data);
+            document.getElementById('current-auto-off-setting').textContent = data.auto_off_duration_minutes;
+            const hours = Math.floor(data.auto_off_duration_minutes / 60);
+            const minutes = data.auto_off_duration_minutes % 60;
+            let timeText = '';
+            if (hours > 0) timeText += `${hours} hour${hours > 1 ? 's' : ''}`;
+            if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
+            document.getElementById('current-auto-off-setting').parentElement.textContent = `Current: ${data.auto_off_duration_minutes} minutes (${timeText})`;
+            showToast(`Settings saved: ${data.auto_off_duration_minutes} minutes`, 'success');
+            addActivityLog(`Auto-off duration updated to ${data.auto_off_duration_minutes} minutes`);
+        });
+
+        // SSH errors
+        socket.on('ssh_error', (data) => {
+            console.error('SSH error:', data);
+            showToast(`Error: ${data.error}`, 'error');
+            addActivityLog(`Error: ${data.error}`, 'error');
+        });
+
+        // Toggle WiFi
+        function toggleWiFi() {
+            const newState = !currentWiFiState;
+            console.log('Toggling WiFi to:', newState);
+            socket.emit('toggle_wifi', { desired_state: newState });
+        }
+
+        // Update auto-off duration
+        function updateAutoOffDuration() {
+            const duration = parseInt(document.getElementById('auto-off-duration').value);
+            if (duration < 1 || duration > 1440) {
+                showToast('Duration must be between 1 and 1440 minutes', 'error');
+                return;
+            }
+            console.log('Updating auto-off duration to:', duration);
+            socket.emit('update_auto_off_duration', { duration_minutes: duration });
+        }
+
+        // Update WiFi display
+        function updateWiFiDisplay(state) {
+            const circle = document.getElementById('wifi-status-circle');
+            const text = document.getElementById('wifi-status-text');
+            const subtitle = document.getElementById('wifi-status-subtitle');
+            const button = document.getElementById('wifi-toggle-btn');
+            const countdownContainer = document.getElementById('countdown-container');
+
+            if (state) {
+                // WiFi ON
+                circle.classList.remove('bg-gray-300');
+                circle.classList.add('bg-green-500');
+                text.textContent = 'ON';
+                text.classList.remove('text-gray-700');
+                text.classList.add('text-green-600');
+                subtitle.textContent = 'WiFi is currently enabled';
+                button.textContent = 'Turn OFF';
+                button.classList.remove('bg-green-600', 'hover:bg-green-700');
+                button.classList.add('bg-red-600', 'hover:bg-red-700');
+                countdownContainer.classList.remove('hidden');
+            } else {
+                // WiFi OFF
+                circle.classList.remove('bg-green-500');
+                circle.classList.add('bg-gray-300');
+                text.textContent = 'OFF';
+                text.classList.remove('text-green-600');
+                text.classList.add('text-gray-700');
+                subtitle.textContent = 'WiFi is currently disabled';
+                button.textContent = 'Turn ON';
+                button.classList.remove('bg-red-600', 'hover:bg-red-700');
+                button.classList.add('bg-green-600', 'hover:bg-green-700');
+                countdownContainer.classList.add('hidden');
+            }
+        }
+
+        // Update countdown display
+        function updateCountdownDisplay(remainingMinutes) {
+            const hours = Math.floor(remainingMinutes / 60);
+            const minutes = remainingMinutes % 60;
+            document.getElementById('countdown-display').textContent = `${hours}h ${minutes}m`;
+        }
+
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            const indicator = document.getElementById('connection-indicator');
+            const status = document.getElementById('connection-status');
+
+            if (connected) {
+                indicator.classList.remove('bg-gray-400');
+                indicator.classList.add('bg-green-500');
+                status.textContent = 'Connected';
+                status.classList.remove('text-gray-600');
+                status.classList.add('text-green-600');
+            } else {
+                indicator.classList.remove('bg-green-500');
+                indicator.classList.add('bg-red-500');
+                status.textContent = 'Disconnected';
+                status.classList.remove('text-green-600');
+                status.classList.add('text-red-600');
+            }
+        }
+
+        // Update last update time
+        function updateLastUpdate() {
+            const now = new Date();
+            document.getElementById('last-update').textContent = now.toLocaleTimeString();
+        }
+
+        // Add activity log entry
+        function addActivityLog(message, type = 'info') {
+            const logContainer = document.getElementById('activity-log');
+            const entry = document.createElement('div');
+            entry.className = 'flex items-start gap-2 text-sm p-2 rounded';
+
+            const time = new Date().toLocaleTimeString();
+            const colorClass = type === 'error' ? 'text-red-600' : type === 'success' ? 'text-green-600' : 'text-gray-600';
+
+            entry.innerHTML = `
+                <span class="text-gray-400">${time}</span>
+                <span class="${colorClass}">${message}</span>
+            `;
+
+            // Clear placeholder if exists
+            if (logContainer.querySelector('.text-gray-500')) {
+                logContainer.innerHTML = '';
+            }
+
+            logContainer.insertBefore(entry, logContainer.firstChild);
+
+            // Keep only last 20 entries
+            while (logContainer.children.length > 20) {
+                logContainer.removeChild(logContainer.lastChild);
+            }
+        }
+
+        // Show toast notification
+        function showToast(message, type = 'info') {
+            const toastContainer = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+
+            const bgColors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                warning: 'bg-yellow-500',
+                info: 'bg-blue-500'
+            };
+
+            toast.className = `${bgColors[type] || bgColors.info} text-white px-6 py-3 rounded-lg shadow-lg transform transition-all duration-300 translate-x-full`;
+            toast.textContent = message;
+
+            toastContainer.appendChild(toast);
+
+            // Animate in
+            setTimeout(() => {
+                toast.classList.remove('translate-x-full');
+            }, 10);
+
+            // Remove after 4 seconds
+            setTimeout(() => {
+                toast.classList.add('translate-x-full');
+                setTimeout(() => {
+                    toastContainer.removeChild(toast);
+                }, 300);
+            }, 4000);
+        }
+
+        // Initialize
+        addActivityLog('Dashboard loaded');
+    </script>
+</body>
+</html>
