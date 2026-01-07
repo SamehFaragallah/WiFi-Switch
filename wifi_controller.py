@@ -7,6 +7,7 @@ import threading
 import signal
 import sys
 import json
+import os
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit
@@ -262,13 +263,41 @@ class SSHController:
 
 
 class ActivityLog:
-    """Manages global activity log with persistence across client connections"""
+    """Manages global activity log with persistence across client connections and script restarts"""
 
-    def __init__(self, max_entries=25, socketio=None):
+    def __init__(self, max_entries=25, socketio=None, log_file='activity_log.json'):
         self._max_entries = max_entries
         self._entries = []
         self._lock = threading.RLock()
         self._socketio = socketio
+        self._log_file = log_file
+        # Load existing entries from file
+        self._load_from_file()
+
+    def _load_from_file(self):
+        """Load activity log entries from persistent storage"""
+        if os.path.exists(self._log_file):
+            try:
+                with open(self._log_file, 'r') as f:
+                    loaded_entries = json.load(f)
+                    with self._lock:
+                        # Keep only the most recent entries up to max_entries
+                        self._entries = loaded_entries[-self._max_entries:]
+                    print(f"[ActivityLog] Loaded {len(self._entries)} entries from {self._log_file}")
+            except Exception as e:
+                print(f"[ActivityLog] Error loading from file: {e}")
+                self._entries = []
+
+    def _save_to_file(self):
+        """Save activity log entries to persistent storage"""
+        try:
+            with self._lock:
+                entries_to_save = list(self._entries)
+            
+            with open(self._log_file, 'w') as f:
+                json.dump(entries_to_save, f, indent=2)
+        except Exception as e:
+            print(f"[ActivityLog] Error saving to file: {e}")
 
     def add_entry(self, message, source="system"):
         """Add an entry to the activity log and broadcast to all clients"""
@@ -285,12 +314,21 @@ class ActivityLog:
                 self._entries = self._entries[-self._max_entries:]
             print(f"[ActivityLog] {message}")
 
+        # Save to file (outside lock to avoid blocking)
+        try:
+            self._save_to_file()
+        except Exception as e:
+            print(f"[ActivityLog] Error saving entry: {e}")
+
         # Broadcast to all clients OUTSIDE the lock
+        # socketio.emit() works cross-thread with eventlet when using broadcast=True
         if entry and self._socketio:
             try:
                 self._socketio.emit('activity_log_entry', entry, broadcast=True, namespace='/')
             except Exception as e:
                 print(f"[ActivityLog] Error broadcasting entry: {e}")
+                import traceback
+                traceback.print_exc()
 
     def get_entries(self):
         """Get all log entries"""
@@ -595,6 +633,10 @@ def signal_handler(sig, frame):
     """Handle shutdown signals"""
     print("\n[Main] Shutting down gracefully...")
     auto_off_timer.cancel()
+    # Save activity log before exiting
+    if activity_log:
+        print("[Main] Saving activity log...")
+        activity_log._save_to_file()
     GPIO.cleanup()
     sys.exit(0)
 
