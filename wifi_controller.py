@@ -27,6 +27,28 @@ socketio_instance = None
 activity_log = None
 
 # ============================================================================
+# Thread-Safe SocketIO Emit Helper for Cross-Thread Communication
+# ============================================================================
+
+def safe_emit_from_thread(socketio_instance, event, data, namespace='/'):
+    """
+    Safely emit SocketIO events from any thread (including GPIO thread) to eventlet context.
+    This wraps the emit in a background task to ensure it runs in the eventlet greenlet context.
+    """
+    if socketio_instance:
+        try:
+            # Use start_background_task to ensure emit happens in eventlet context
+            # This is critical when emitting from regular threads (like GPIO thread)
+            def emit_in_context():
+                socketio_instance.emit(event, data, namespace=namespace)
+            
+            socketio_instance.start_background_task(emit_in_context)
+        except Exception as e:
+            print(f"[safe_emit] Error scheduling emit for {event}: {e}")
+            import traceback
+            traceback.print_exc()
+
+# ============================================================================
 # Thread-Safe State Management Classes
 # ============================================================================
 
@@ -66,19 +88,18 @@ class WiFiStateManager:
                 self.activity_log.add_entry(f"WiFi turned {state_text} (via {source_text})", source=source)
 
             # Broadcast to all connected clients
-            # Omit 'to' parameter to broadcast to all clients
+            # Use safe_emit for cross-thread safety with eventlet
             if self.socketio:
-                try:
-                    self.socketio.emit('wifi_state_changed', {
+                safe_emit_from_thread(
+                    self.socketio,
+                    'wifi_state_changed',
+                    {
                         'state': new_state,
                         'source': source,
                         'timestamp': datetime.now().isoformat()
-                    }, namespace='/')
-                    print(f"[WiFiStateManager] Broadcasted state change to all clients")
-                except Exception as e:
-                    print(f"[WiFiStateManager] Error emitting state change: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    }
+                )
+                print(f"[WiFiStateManager] Broadcasted state change to all clients")
 
         return state_changed
 
@@ -167,12 +188,13 @@ class AutoOffTimer:
         print("[AutoOffTimer] Timer expired, turning WiFi OFF")
         self._callback()
         if self._socketio:
-            try:
-                self._socketio.emit('auto_off_triggered', {
+            safe_emit_from_thread(
+                self._socketio,
+                'auto_off_triggered',
+                {
                     'timestamp': datetime.now().isoformat()
-                }, namespace='/')
-            except Exception as e:
-                print(f"[AutoOffTimer] Error emitting auto_off_triggered: {e}")
+                }
+            )
 
     def _emit_countdown_loop(self):
         """Emit countdown updates every 60 seconds"""
@@ -182,13 +204,14 @@ class AutoOffTimer:
                 break
 
             if self._socketio:
-                try:
-                    self._socketio.emit('auto_off_countdown', {
+                safe_emit_from_thread(
+                    self._socketio,
+                    'auto_off_countdown',
+                    {
                         'remaining_seconds': remaining,
                         'remaining_minutes': remaining // 60
-                    }, namespace='/')
-                except Exception as e:
-                    print(f"[AutoOffTimer] Error emitting countdown: {e}")
+                    }
+                )
 
             time.sleep(60)
 
@@ -321,14 +344,9 @@ class ActivityLog:
             print(f"[ActivityLog] Error saving entry: {e}")
 
         # Broadcast to all clients OUTSIDE the lock
-        # Omit 'to' parameter to broadcast to all clients
+        # Use safe_emit for cross-thread safety with eventlet
         if entry and self._socketio:
-            try:
-                self._socketio.emit('activity_log_entry', entry, namespace='/')
-            except Exception as e:
-                print(f"[ActivityLog] Error broadcasting entry: {e}")
-                import traceback
-                traceback.print_exc()
+            safe_emit_from_thread(self._socketio, 'activity_log_entry', entry)
 
     def get_entries(self):
         """Get all log entries"""
@@ -568,13 +586,14 @@ def gpio_loop():
                         if state_manager.set_state(True, source='gpio'):
                             success, message = ssh_controller.set_wifi_on()
                             if not success and socketio_instance:
-                                try:
-                                    socketio_instance.emit('ssh_error', {
+                                safe_emit_from_thread(
+                                    socketio_instance,
+                                    'ssh_error',
+                                    {
                                         'error': f'Failed to turn WiFi ON: {message}',
                                         'timestamp': datetime.now().isoformat()
-                                    }, namespace='/')
-                                except Exception as e:
-                                    print(f"[GPIO] Error emitting ssh_error: {e}")
+                                    }
+                                )
 
                             # Start auto-off timer
                             if CONFIG['auto_off']['enabled']:
@@ -597,13 +616,14 @@ def gpio_loop():
                         if state_manager.set_state(False, source='gpio'):
                             success, message = ssh_controller.set_wifi_off()
                             if not success and socketio_instance:
-                                try:
-                                    socketio_instance.emit('ssh_error', {
+                                safe_emit_from_thread(
+                                    socketio_instance,
+                                    'ssh_error',
+                                    {
                                         'error': f'Failed to turn WiFi OFF: {message}',
                                         'timestamp': datetime.now().isoformat()
-                                    }, namespace='/')
-                                except Exception as e:
-                                    print(f"[GPIO] Error emitting ssh_error: {e}")
+                                    }
+                                )
 
                             # Cancel auto-off timer
                             auto_off_timer.cancel()
