@@ -60,7 +60,7 @@ class WiFiStateManager:
                     'state': new_state,
                     'source': source,
                     'timestamp': datetime.now().isoformat()
-                }, broadcast=True)
+                })
             except Exception as e:
                 print(f"[WiFiStateManager] Error emitting state change: {e}")
 
