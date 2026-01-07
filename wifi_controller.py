@@ -13,7 +13,6 @@ from flask import Flask, render_template, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit
 from functools import wraps
 from config import CONFIG
-import eventlet
 
 # GPIO Pin Configuration
 BUTTON_PIN_ON = 23
@@ -34,7 +33,7 @@ activity_log = None
 def safe_emit_from_thread(socketio_instance, event, data, namespace='/'):
     """
     Safely emit SocketIO events from any thread (including GPIO thread) to eventlet context.
-    Uses eventlet.spawn to ensure the emit runs in the eventlet hub's context.
+    Uses socketio.start_background_task() which properly handles cross-thread emits with eventlet.
     """
     if socketio_instance:
         try:
@@ -42,9 +41,9 @@ def safe_emit_from_thread(socketio_instance, event, data, namespace='/'):
             event_data = data
             event_name = event
             
-            # Use eventlet.spawn to run emit in eventlet greenlet context
-            # This works even when called from non-eventlet threads
-            def emit_in_greenlet():
+            # Use start_background_task which properly handles cross-thread communication
+            # This schedules the emit to run in the eventlet greenlet context
+            def emit_in_context():
                 try:
                     socketio_instance.emit(event_name, event_data, namespace=namespace)
                 except Exception as inner_e:
@@ -52,10 +51,10 @@ def safe_emit_from_thread(socketio_instance, event, data, namespace='/'):
                     import traceback
                     traceback.print_exc()
             
-            # Spawn a greenlet in the eventlet hub to execute the emit
-            eventlet.spawn(emit_in_greenlet)
+            # This works correctly with eventlet even when called from regular threads
+            socketio_instance.start_background_task(emit_in_context)
         except Exception as e:
-            print(f"[safe_emit] Error spawning greenlet for {event}: {e}")
+            print(f"[safe_emit] Error scheduling emit for {event}: {e}")
             import traceback
             traceback.print_exc()
     else:
@@ -358,8 +357,14 @@ class ActivityLog:
 
         # Broadcast to all clients OUTSIDE the lock
         # Use safe_emit for cross-thread safety with eventlet
+        # This ensures emits from GPIO thread work correctly with eventlet
         if entry and self._socketio:
-            safe_emit_from_thread(self._socketio, 'activity_log_entry', entry)
+            try:
+                safe_emit_from_thread(self._socketio, 'activity_log_entry', entry)
+            except Exception as e:
+                print(f"[ActivityLog] Error in safe_emit for activity log: {e}")
+                import traceback
+                traceback.print_exc()
 
     def get_entries(self):
         """Get all log entries"""
