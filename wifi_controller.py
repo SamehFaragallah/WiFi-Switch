@@ -7,7 +7,6 @@ import threading
 import signal
 import sys
 import json
-import queue
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit
@@ -17,12 +16,6 @@ from config import CONFIG
 # GPIO Pin Configuration
 BUTTON_PIN_ON = 23
 BUTTON_PIN_OFF = 24
-
-# Event queue for thread-safe communication between GPIO thread and SocketIO
-event_queue = queue.Queue()
-
-# Flag to track if event processor has been started
-event_processor_started = False
 
 # Global instances (will be initialized in main)
 state_manager = None
@@ -52,7 +45,7 @@ class WiFiStateManager:
 
     def set_state(self, new_state, source="unknown"):
         """
-        Set WiFi state and queue SocketIO event if changed
+        Set WiFi state and emit SocketIO event if changed
         Returns True if state changed, False otherwise
         """
         state_changed = False
@@ -62,28 +55,28 @@ class WiFiStateManager:
                 state_changed = True
                 print(f"[WiFiStateManager] State changed to {new_state} (source: {source})")
 
-        # Queue event for SocketIO emission (thread-safe communication)
+        # Emit SocketIO event and log activity OUTSIDE the lock to avoid blocking
         if state_changed:
             state_text = "ON" if new_state else "OFF"
             source_text = "physical button" if source == "gpio" else "dashboard"
 
             # Add to activity log (only for real actions, not initial/query)
             if source not in ['initial', 'query'] and self.activity_log:
-                # Queue activity log entry too
-                event_queue.put({
-                    'type': 'activity_log',
-                    'message': f"WiFi turned {state_text} (via {source_text})",
-                    'source': source
-                })
+                self.activity_log.add_entry(f"WiFi turned {state_text} (via {source_text})", source=source)
 
-            # Queue state change event
-            event_queue.put({
-                'type': 'wifi_state_changed',
-                'state': new_state,
-                'source': source,
-                'timestamp': datetime.now().isoformat()
-            })
-            print(f"[WiFiStateManager] Queued state change event for broadcast")
+            # Broadcast to all connected clients
+            if self.socketio:
+                try:
+                    self.socketio.emit('wifi_state_changed', {
+                        'state': new_state,
+                        'source': source,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                    print(f"[WiFiStateManager] Broadcasted state change to all clients")
+                except Exception as e:
+                    print(f"[WiFiStateManager] Error emitting state change: {e}")
+                    import traceback
+                    traceback.print_exc()
 
         return state_changed
 
@@ -171,25 +164,23 @@ class AutoOffTimer:
         """Called when timer expires"""
         print("[AutoOffTimer] Timer expired, turning WiFi OFF")
         self._callback()
-        # Queue the event instead of emitting directly
-        event_queue.put({
-            'type': 'auto_off_triggered',
-            'timestamp': datetime.now().isoformat()
-        })
+        if self._socketio:
+            self._socketio.emit('auto_off_triggered', {
+                'timestamp': datetime.now().isoformat()
+            })
 
     def _emit_countdown_loop(self):
-        """Queue countdown updates every 60 seconds"""
+        """Emit countdown updates every 60 seconds"""
         while not self._stop_countdown:
             remaining = self.get_remaining_seconds()
             if remaining <= 0:
                 break
 
-            # Queue countdown event instead of emitting directly
-            event_queue.put({
-                'type': 'auto_off_countdown',
-                'remaining_seconds': remaining,
-                'remaining_minutes': remaining // 60
-            })
+            if self._socketio:
+                self._socketio.emit('auto_off_countdown', {
+                    'remaining_seconds': remaining,
+                    'remaining_minutes': remaining // 60
+                })
 
             time.sleep(60)
 
@@ -273,7 +264,7 @@ class ActivityLog:
         self._socketio = socketio
 
     def add_entry(self, message, source="system"):
-        """Add an entry to the activity log and queue for broadcast"""
+        """Add an entry to the activity log and broadcast to all clients"""
         entry = None
         with self._lock:
             entry = {
@@ -287,12 +278,12 @@ class ActivityLog:
                 self._entries = self._entries[-self._max_entries:]
             print(f"[ActivityLog] {message}")
 
-        # Queue broadcast event (thread-safe)
-        if entry:
-            event_queue.put({
-                'type': 'activity_log_entry',
-                'entry': entry
-            })
+        # Broadcast to all clients OUTSIDE the lock
+        if entry and self._socketio:
+            try:
+                self._socketio.emit('activity_log_entry', entry)
+            except Exception as e:
+                print(f"[ActivityLog] Error broadcasting entry: {e}")
 
     def get_entries(self):
         """Get all log entries"""
@@ -364,14 +355,6 @@ def index():
 @socketio.on('connect')
 def handle_connect():
     """Client connected"""
-    global event_processor_started
-
-    # Start event processor on first client connection
-    if not event_processor_started:
-        socketio.start_background_task(process_event_queue)
-        event_processor_started = True
-        print("[SocketIO] Event queue processor started")
-
     print(f"[SocketIO] Client connected")
     # Send current state immediately
     emit('wifi_state_changed', {
@@ -538,10 +521,8 @@ def gpio_loop():
                         # Turn WiFi ON
                         if state_manager.set_state(True, source='gpio'):
                             success, message = ssh_controller.set_wifi_on()
-                            if not success:
-                                # Queue SSH error event
-                                event_queue.put({
-                                    'type': 'ssh_error',
+                            if not success and socketio_instance:
+                                socketio_instance.emit('ssh_error', {
                                     'error': f'Failed to turn WiFi ON: {message}',
                                     'timestamp': datetime.now().isoformat()
                                 })
@@ -566,10 +547,8 @@ def gpio_loop():
                         # Turn WiFi OFF
                         if state_manager.set_state(False, source='gpio'):
                             success, message = ssh_controller.set_wifi_off()
-                            if not success:
-                                # Queue SSH error event
-                                event_queue.put({
-                                    'type': 'ssh_error',
+                            if not success and socketio_instance:
+                                socketio_instance.emit('ssh_error', {
                                     'error': f'Failed to turn WiFi OFF: {message}',
                                     'timestamp': datetime.now().isoformat()
                                 })
@@ -584,69 +563,6 @@ def gpio_loop():
         print(f"[GPIO] Error: {str(e)}")
     finally:
         GPIO.cleanup()
-
-
-# ============================================================================
-# Event Queue Processing
-# ============================================================================
-
-def process_event_queue():
-    """
-    Background task that processes events from the queue and emits them via SocketIO.
-    This runs in the eventlet context, avoiding threading conflicts.
-    """
-    print("[EventQueue] Background task started")
-    while True:
-        try:
-            # Get event from queue (blocks until available)
-            event = event_queue.get(timeout=1)
-
-            event_type = event.get('type')
-            print(f"[EventQueue] Processing event: {event_type}")
-
-            if event_type == 'wifi_state_changed':
-                socketio.emit('wifi_state_changed', {
-                    'state': event['state'],
-                    'source': event['source'],
-                    'timestamp': event['timestamp']
-                })
-                print(f"[EventQueue] Emitted wifi_state_changed")
-
-            elif event_type == 'activity_log':
-                # Add to activity log
-                if activity_log:
-                    activity_log.add_entry(event['message'], source=event['source'])
-
-            elif event_type == 'activity_log_entry':
-                socketio.emit('activity_log_entry', event['entry'])
-                print(f"[EventQueue] Emitted activity_log_entry")
-
-            elif event_type == 'auto_off_countdown':
-                socketio.emit('auto_off_countdown', {
-                    'remaining_seconds': event['remaining_seconds'],
-                    'remaining_minutes': event['remaining_minutes']
-                })
-
-            elif event_type == 'auto_off_triggered':
-                socketio.emit('auto_off_triggered', {
-                    'timestamp': event['timestamp']
-                })
-                print(f"[EventQueue] Emitted auto_off_triggered")
-
-            elif event_type == 'ssh_error':
-                socketio.emit('ssh_error', {
-                    'error': event['error'],
-                    'timestamp': event['timestamp']
-                })
-                print(f"[EventQueue] Emitted ssh_error")
-
-        except queue.Empty:
-            # No events in queue, continue
-            pass
-        except Exception as e:
-            print(f"[EventQueue] Error processing event: {e}")
-            import traceback
-            traceback.print_exc()
 
 
 # ============================================================================
@@ -710,7 +626,6 @@ def main():
 
     print(f"[Main] Dashboard starting on {CONFIG['flask']['host']}:{CONFIG['flask']['port']}")
     print(f"[Main] Login credentials: {CONFIG['dashboard']['username']} / {CONFIG['dashboard']['password']}")
-    print("[Main] Event queue processor will start on first client connection")
     print("[Main] Press Ctrl+C to stop")
 
     # Start Flask-SocketIO server
