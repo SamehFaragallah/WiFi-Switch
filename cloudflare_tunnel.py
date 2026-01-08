@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import subprocess
 import re
 import time
@@ -7,6 +8,8 @@ import threading
 import signal
 import sys
 import os
+
+import requests
 
 # ============================================================================
 # Configuration
@@ -46,6 +49,14 @@ def on_tunnel_ready(tunnel_url):
         print(f"✅ URL saved to {TUNNEL_URL_FILE}")
     except Exception as e:
         print(f"❌ Error saving URL to file: {e}")
+
+    data = {
+        "deviceId": "5864",
+        "newURL": tunnel_url
+    }
+
+    res = requests.post('https://rock.lcbcchurch.com/Webhooks/Lava.ashx/WiFiSwitchAPI', json=data)
+    print(json.dumps(res.json(), indent=4))
 
     # Example: Send to a webhook (uncomment and customize)
     # import requests
