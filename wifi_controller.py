@@ -45,8 +45,9 @@ def safe_emit_from_thread(socketio_instance, event, data, namespace='/'):
             # This schedules the emit to run in the eventlet greenlet context
             def emit_in_context():
                 try:
-                    # Use broadcast=True to ensure ALL connected clients receive the event
-                    socketio_instance.emit(event_name, event_data, namespace=namespace, broadcast=True)
+                    # When calling socketio.emit() directly (not from event handler),
+                    # it automatically broadcasts to ALL connected clients
+                    socketio_instance.emit(event_name, event_data, namespace=namespace)
                     print(f"[safe_emit] Successfully broadcast {event_name} to all clients")
                 except Exception as inner_e:
                     print(f"[safe_emit] Error emitting {event_name}: {inner_e}")
