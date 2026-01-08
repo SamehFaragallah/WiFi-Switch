@@ -375,7 +375,11 @@ class SSHController:
             )
 
             stdin, stdout, stderr = ssh.exec_command(command)
+            print(f'SSH COMMAND: {command}')
+            
             output = stdout.read().decode('utf-8')
+
+            print(f'SSH OUTPUT: {output}')
             error = stderr.read().decode('utf-8')
 
             ssh.close()
