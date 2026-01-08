@@ -1,0 +1,21 @@
+[Unit]
+Description=Cloudflare Quick Tunnel for WiFi Controller Dashboard
+After=network.target network-online.target
+Wants=network-online.target
+Before=wifi-controller.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Desktop/WiFi-Switch
+ExecStart=/home/pi/Desktop/WiFi-Switch/venv/bin/python3 /home/pi/Desktop/WiFi-Switch/cloudflare_tunnel.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables (if needed)
+# Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+[Install]
+WantedBy=multi-user.target
