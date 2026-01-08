@@ -1,17 +1,18 @@
 [Unit]
 Description=WiFi Controller with Dashboard
-After=network.target network-online.target cloudflare-tunnel.service graphical.target
+After=network.target network-online.target cloudflare-tunnel.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/Desktop/WiFi-Switch
-Environment="DISPLAY=:0"
-Environment="PYTHONUNBUFFERED=1"
-ExecStart=/usr/bin/lxterminal --title="WiFi Controller" -e "/home/pi/Desktop/WiFi-Switch/venv/bin/python3 -u /home/pi/Desktop/WiFi-Switch/wifi_controller.py"
+ExecStart=/home/pi/Desktop/WiFi-Switch/venv/bin/python3 -u /home/pi/Desktop/WiFi-Switch/wifi_controller.py
 Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment="PYTHONUNBUFFERED=1"
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
