@@ -1,8 +1,9 @@
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+from config import CONFIG
 
 # Your bot token (xoxb-...)
-SLACK_BOT_TOKEN = "xoxb-7610951043-10272617235233-2gOVCwLCE4cwnlBSf0ytcVzO"
+SLACK_BOT_TOKEN = CONFIG['slack'].get('bot_token', None)
 
 # The user's Slack ID (e.g. U012ABCDEF)
 USER_ID = "U08HUJ4R8MU"
