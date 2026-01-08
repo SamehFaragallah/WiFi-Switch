@@ -222,12 +222,21 @@ class AutoOffTimer:
 
     def _emit_countdown_loop(self):
         """Emit countdown updates every 60 seconds (initial emission done in start())"""
+        print("[AutoOffTimer] Countdown loop started")
         while not self._stop_countdown:
             # Sleep first since initial emission is done in start()
+            print(f"[AutoOffTimer] Countdown loop sleeping for 60 seconds...")
             time.sleep(60)
 
+            if self._stop_countdown:
+                print("[AutoOffTimer] Countdown loop stopped")
+                break
+
             remaining = self.get_remaining_seconds()
+            print(f"[AutoOffTimer] Countdown loop: remaining={remaining}s ({remaining // 60}m)")
+
             if remaining <= 0:
+                print("[AutoOffTimer] Countdown loop: timer expired, breaking")
                 break
 
             if self._socketio:
@@ -239,6 +248,11 @@ class AutoOffTimer:
                         'remaining_minutes': remaining // 60
                     }
                 )
+                print(f"[AutoOffTimer] Emitted countdown update: {remaining // 60} minutes")
+            else:
+                print("[AutoOffTimer] No socketio instance, skipping emit")
+
+        print("[AutoOffTimer] Countdown loop exited")
 
 
 class SSHController:
