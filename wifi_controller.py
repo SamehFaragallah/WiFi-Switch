@@ -167,11 +167,23 @@ class AutoOffTimer:
             self._stop_countdown = False
             print(f"[AutoOffTimer] Started {duration_minutes} minute timer")
 
-            # Start countdown emission thread
-            if self._socketio:
-                self._countdown_thread = threading.Thread(target=self._emit_countdown_loop)
-                self._countdown_thread.daemon = True
-                self._countdown_thread.start()
+        # Emit initial countdown immediately (outside lock to avoid deadlock)
+        if self._socketio:
+            remaining = self.get_remaining_seconds()
+            safe_emit_from_thread(
+                self._socketio,
+                'auto_off_countdown',
+                {
+                    'remaining_seconds': remaining,
+                    'remaining_minutes': remaining // 60
+                }
+            )
+            print(f"[AutoOffTimer] Emitted initial countdown: {remaining // 60} minutes")
+
+            # Start countdown emission thread for subsequent updates
+            self._countdown_thread = threading.Thread(target=self._emit_countdown_loop)
+            self._countdown_thread.daemon = True
+            self._countdown_thread.start()
 
     def cancel(self):
         """Cancel active timer"""
@@ -209,8 +221,11 @@ class AutoOffTimer:
             )
 
     def _emit_countdown_loop(self):
-        """Emit countdown updates every 60 seconds"""
+        """Emit countdown updates every 60 seconds (initial emission done in start())"""
         while not self._stop_countdown:
+            # Sleep first since initial emission is done in start()
+            time.sleep(60)
+
             remaining = self.get_remaining_seconds()
             if remaining <= 0:
                 break
@@ -224,8 +239,6 @@ class AutoOffTimer:
                         'remaining_minutes': remaining // 60
                     }
                 )
-
-            time.sleep(60)
 
 
 class SSHController:
