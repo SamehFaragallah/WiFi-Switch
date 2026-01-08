@@ -8,6 +8,7 @@ import signal
 import sys
 import json
 import os
+import queue
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit
@@ -25,6 +26,8 @@ auto_off_timer = None
 ssh_controller = None
 socketio_instance = None
 activity_log = None
+# Thread-safe queue for cross-thread SocketIO emits
+emit_queue = None
 
 # ============================================================================
 # Thread-Safe SocketIO Emit Helper for Cross-Thread Communication
@@ -33,35 +36,71 @@ activity_log = None
 def safe_emit_from_thread(socketio_instance, event, data, namespace='/'):
     """
     Safely emit SocketIO events from any thread (including GPIO thread) to eventlet context.
-    Uses socketio.start_background_task() which properly handles cross-thread emits with eventlet.
+    Uses a thread-safe queue that is polled by an eventlet background task.
     """
-    if socketio_instance:
+    global emit_queue
+    if emit_queue is not None:
         try:
-            # Capture data for closure
-            event_data = data
-            event_name = event
-
-            # Use start_background_task which properly handles cross-thread communication
-            # This schedules the emit to run in the eventlet greenlet context
-            def emit_in_context():
-                try:
-                    # When calling socketio.emit() directly (not from event handler),
-                    # it automatically broadcasts to ALL connected clients
-                    socketio_instance.emit(event_name, event_data, namespace=namespace)
-                    print(f"[safe_emit] Successfully broadcast {event_name} to all clients")
-                except Exception as inner_e:
-                    print(f"[safe_emit] Error emitting {event_name}: {inner_e}")
-                    import traceback
-                    traceback.print_exc()
-
-            # This works correctly with eventlet even when called from regular threads
-            socketio_instance.start_background_task(emit_in_context)
+            emit_queue.put({
+                'event': event,
+                'data': data,
+                'namespace': namespace
+            })
+            print(f"[safe_emit] Queued emit for {event}")
         except Exception as e:
-            print(f"[safe_emit] Error scheduling emit for {event}: {e}")
+            print(f"[safe_emit] Error queuing emit for {event}: {e}")
             import traceback
             traceback.print_exc()
+    elif socketio_instance:
+        # Fallback: try direct emit if queue not available
+        try:
+            socketio_instance.emit(event, data, namespace=namespace)
+            print(f"[safe_emit] Direct emit succeeded for {event} (queue not available)")
+        except Exception as e:
+            print(f"[safe_emit] Direct emit failed for {event}: {e}")
     else:
-        print(f"[safe_emit] No socketio_instance provided for {event}")
+        print(f"[safe_emit] No socketio_instance or queue available for {event}")
+
+
+def emit_queue_processor(socketio_instance):
+    """
+    Background task that processes emit queue in eventlet context.
+    This runs continuously and processes any emits queued from other threads.
+    """
+    global emit_queue
+    # Import eventlet here since we need it only in this function
+    import eventlet
+    print("[emit_queue_processor] Started")
+    while True:
+        try:
+            # Check queue with non-blocking get
+            try:
+                item = emit_queue.get_nowait()
+            except queue.Empty:
+                # Queue is empty, yield to other greenlets and check again soon
+                eventlet.sleep(0.01)  # Yield to eventlet
+                continue
+            
+            # Emit in eventlet context
+            try:
+                socketio_instance.emit(
+                    item['event'],
+                    item['data'],
+                    namespace=item['namespace']
+                )
+                print(f"[emit_queue_processor] Successfully emitted {item['event']} to all clients")
+            except Exception as e:
+                print(f"[emit_queue_processor] Error emitting {item['event']}: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Small yield after processing to allow other tasks to run
+            eventlet.sleep(0)
+        except Exception as e:
+            print(f"[emit_queue_processor] Error in queue processor: {e}")
+            import traceback
+            traceback.print_exc()
+            eventlet.sleep(0.1)  # Yield before retrying
 
 # ============================================================================
 # Thread-Safe State Management Classes
@@ -712,11 +751,14 @@ def signal_handler(sig, frame):
 
 def main():
     """Main application entry point"""
-    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log
+    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue
 
     print("=" * 60)
     print("WiFi Controller Dashboard")
     print("=" * 60)
+
+    # Initialize thread-safe queue for cross-thread SocketIO emits
+    emit_queue = queue.Queue()
 
     # Initialize components
     activity_log = ActivityLog(max_entries=25, socketio=socketio)
@@ -742,6 +784,11 @@ def main():
     # Setup signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    # Start emit queue processor in eventlet context
+    # This processes emits queued from GPIO thread and other non-eventlet threads
+    socketio.start_background_task(emit_queue_processor, socketio)
+    print("[Main] Started emit queue processor")
 
     # Start GPIO monitoring in a separate thread
     # GPIO operations are blocking and should run in a regular thread, not eventlet
