@@ -40,17 +40,19 @@ def safe_emit_from_thread(socketio_instance, event, data, namespace='/'):
             # Capture data for closure
             event_data = data
             event_name = event
-            
+
             # Use start_background_task which properly handles cross-thread communication
             # This schedules the emit to run in the eventlet greenlet context
             def emit_in_context():
                 try:
-                    socketio_instance.emit(event_name, event_data, namespace=namespace)
+                    # Use broadcast=True to ensure ALL connected clients receive the event
+                    socketio_instance.emit(event_name, event_data, namespace=namespace, broadcast=True)
+                    print(f"[safe_emit] Successfully broadcast {event_name} to all clients")
                 except Exception as inner_e:
                     print(f"[safe_emit] Error emitting {event_name}: {inner_e}")
                     import traceback
                     traceback.print_exc()
-            
+
             # This works correctly with eventlet even when called from regular threads
             socketio_instance.start_background_task(emit_in_context)
         except Exception as e:
