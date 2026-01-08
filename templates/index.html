@@ -99,6 +99,34 @@
                     </p>
                 </div>
 
+                <!-- Device Name Setting -->
+                <div class="mb-6">
+                    <label for="device-name" class="block text-gray-700 font-semibold mb-2">
+                        Device Name
+                    </label>
+                    <p class="text-sm text-gray-600 mb-3">
+                        Device name will be prepended to all activity log entries (e.g., "Device Name: Log message").
+                    </p>
+                    <div class="flex items-center gap-3">
+                        <input
+                            type="text"
+                            id="device-name"
+                            placeholder="Enter device name"
+                            maxlength="50"
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                        <button
+                            onclick="updateDeviceName()"
+                            class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition duration-200"
+                        >
+                            Save
+                        </button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">
+                        Current: <span id="current-device-name">Not set</span>
+                    </p>
+                </div>
+
                 <!-- SSH Status -->
                 <div class="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                     <div class="flex items-center gap-2">
@@ -162,6 +190,8 @@
             console.log('Current settings:', data);
             const durationInput = document.getElementById('auto-off-duration');
             const currentSetting = document.getElementById('current-auto-off-setting');
+            const deviceNameInput = document.getElementById('device-name');
+            const currentDeviceName = document.getElementById('current-device-name');
 
             if (durationInput) durationInput.value = data.auto_off_duration_minutes;
 
@@ -174,6 +204,14 @@
 
                 // Update the span content, not the parent
                 currentSetting.textContent = `${data.auto_off_duration_minutes} minutes (${timeText})`;
+            }
+
+            // Update device name
+            if (deviceNameInput) {
+                deviceNameInput.value = data.device_name || '';
+            }
+            if (currentDeviceName) {
+                currentDeviceName.textContent = data.device_name || 'Not set';
             }
 
             // Update SSH status
@@ -276,20 +314,34 @@
         // Settings updated
         socket.on('settings_updated', (data) => {
             console.log('Settings updated:', data);
-            const currentSetting = document.getElementById('current-auto-off-setting');
+            
+            // Update auto-off duration if provided
+            if (data.auto_off_duration_minutes !== undefined) {
+                const currentSetting = document.getElementById('current-auto-off-setting');
+                if (currentSetting) {
+                    const hours = Math.floor(data.auto_off_duration_minutes / 60);
+                    const minutes = data.auto_off_duration_minutes % 60;
+                    let timeText = '';
+                    if (hours > 0) timeText += `${hours} hour${hours > 1 ? 's' : ''}`;
+                    if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
 
-            if (currentSetting) {
-                const hours = Math.floor(data.auto_off_duration_minutes / 60);
-                const minutes = data.auto_off_duration_minutes % 60;
-                let timeText = '';
-                if (hours > 0) timeText += `${hours} hour${hours > 1 ? 's' : ''}`;
-                if (minutes > 0) timeText += `${hours > 0 ? ' ' : ''}${minutes} minute${minutes > 1 ? 's' : ''}`;
-
-                // Update the span content, not the parent
-                currentSetting.textContent = `${data.auto_off_duration_minutes} minutes (${timeText})`;
+                    currentSetting.textContent = `${data.auto_off_duration_minutes} minutes (${timeText})`;
+                }
+                showToast(`Settings saved: ${data.auto_off_duration_minutes} minutes`, 'success');
             }
-
-            showToast(`Settings saved: ${data.auto_off_duration_minutes} minutes`, 'success');
+            
+            // Update device name if provided
+            if (data.device_name !== undefined) {
+                const currentDeviceName = document.getElementById('current-device-name');
+                if (currentDeviceName) {
+                    currentDeviceName.textContent = data.device_name || 'Not set';
+                }
+                const deviceNameInput = document.getElementById('device-name');
+                if (deviceNameInput) {
+                    deviceNameInput.value = data.device_name || '';
+                }
+                showToast(`Device name saved: ${data.device_name || 'cleared'}`, 'success');
+            }
         });
 
         // SSH errors
@@ -328,6 +380,17 @@
             }
             console.log('Updating auto-off duration to:', duration);
             socket.emit('update_auto_off_duration', { duration_minutes: duration });
+        }
+
+        // Update device name
+        function updateDeviceName() {
+            const deviceName = document.getElementById('device-name').value.trim();
+            if (deviceName.length > 50) {
+                showToast('Device name must be 50 characters or less', 'error');
+                return;
+            }
+            console.log('Updating device name to:', deviceName);
+            socket.emit('update_device_name', { device_name: deviceName });
         }
 
         // Update WiFi display

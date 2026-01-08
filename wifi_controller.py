@@ -459,8 +459,14 @@ class ActivityLog:
         """Add an entry to the activity log and broadcast to all clients"""
         entry = None
         with self._lock:
+            # Prepend device name to message if configured
+            device_name = CONFIG.get('device', {}).get('name', '').strip()
+            formatted_message = message
+            if device_name:
+                formatted_message = f"{device_name}: {message}"
+            
             entry = {
-                'message': message,
+                'message': formatted_message,
                 'source': source,
                 'timestamp': datetime.now().isoformat()
             }
@@ -468,7 +474,7 @@ class ActivityLog:
             # Keep only last max_entries
             if len(self._entries) > self._max_entries:
                 self._entries = self._entries[-self._max_entries:]
-            print(f"[ActivityLog] {message}")
+            print(f"[ActivityLog] {formatted_message}")
 
         # Save to file (outside lock to avoid blocking)
         try:
@@ -575,7 +581,8 @@ def handle_connect():
     # Send current settings without notification
     emit('current_settings', {
         'auto_off_duration_minutes': CONFIG['auto_off']['duration_minutes'],
-        'ssh_enabled': CONFIG['ssh'].get('enabled', True)
+        'ssh_enabled': CONFIG['ssh'].get('enabled', True),
+        'device_name': CONFIG.get('device', {}).get('name', '')
     })
 
     # Send activity log history
@@ -684,6 +691,38 @@ def handle_update_auto_off_duration(data):
     except Exception as e:
         emit('ssh_error', {
             'error': f'Failed to save settings: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        })
+
+
+@socketio.on('update_device_name')
+def handle_update_device_name(data):
+    """Update device name setting"""
+    device_name = data.get('device_name', '').strip()
+    print(f"[SocketIO] Update device name to: '{device_name}'")
+
+    # Ensure device config exists
+    if 'device' not in CONFIG:
+        CONFIG['device'] = {}
+    
+    # Update config
+    CONFIG['device']['name'] = device_name
+
+    # Save to file with proper Python formatting (preserves True/False/None)
+    try:
+        save_config_to_file(CONFIG, 'config.py')
+
+        # Add to activity log (without device name prepending to avoid recursion)
+        if activity_log:
+            activity_log.add_entry(f"Device name updated to '{device_name}'", source="dashboard")
+
+        # Broadcast settings update to all clients
+        socketio.emit('settings_updated', {
+            'device_name': device_name
+        }, namespace='/')
+    except Exception as e:
+        emit('ssh_error', {
+            'error': f'Failed to save device name: {str(e)}',
             'timestamp': datetime.now().isoformat()
         })
 
