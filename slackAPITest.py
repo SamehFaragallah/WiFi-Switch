@@ -6,14 +6,23 @@ from config import CONFIG
 SLACK_BOT_TOKEN = CONFIG['slack'].get('bot_token', None)
 
 # The user's Slack ID (e.g. U012ABCDEF)
-USER_ID = "U08HUJ4R8MU"
+USER_IDS = [
+    "U08HUJ4R8MU",
+    "U069J0MEQTF",
+    "UN81NP3FV"
+]
+
+MESSAGE = "WiFi Switch: Test message to group"
 
 client = WebClient(token=SLACK_BOT_TOKEN)
 
-def send_dm(user_id, message):
+def send_group_dm(user_ids, message):
     try:
-        # Open a DM channel with the user
-        response = client.conversations_open(users=user_id)
+        # Open (or reuse) a group DM with the users
+        response = client.conversations_open(
+            users=",".join(user_ids)
+        )
+
         channel_id = response["channel"]["id"]
 
         # Send the message
@@ -22,10 +31,12 @@ def send_dm(user_id, message):
             text=message
         )
 
-        print("Message sent successfully!")
+        print("Group DM sent successfully")
 
     except SlackApiError as e:
-        print(f"Error sending message: {e.response['error']}")
+        print("Slack API error:", e.response["error"])
+    except Exception as e:
+        print("Unexpected error:", str(e))
 
 if __name__ == "__main__":
-    send_dm(USER_ID, "Hello from my Python bot 👋")
+    send_group_dm(USER_IDS, MESSAGE)
