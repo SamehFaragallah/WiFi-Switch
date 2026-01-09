@@ -12,6 +12,7 @@ import queue
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit
+from flask_cors import CORS
 from functools import wraps
 from config import CONFIG
 
@@ -508,6 +509,16 @@ class ActivityLog:
 # ============================================================================
 
 app = Flask(__name__)
+
+CORS(app, resources={
+    r"/getstatus": {
+        "origins": [
+            "https://rock.lcbcchurch.com",
+            "https://lcbcchurch.com"
+        ]
+    }
+})
+
 app.config['SECRET_KEY'] = CONFIG['dashboard']['secret_key']
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
