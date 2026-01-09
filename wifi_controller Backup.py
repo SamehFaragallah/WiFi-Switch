@@ -9,10 +9,8 @@ import sys
 import json
 import os
 import queue
-import secrets
-import hashlib
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, session, redirect, url_for, jsonify, make_response
+from flask import Flask, render_template, request, session, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from functools import wraps
@@ -31,131 +29,6 @@ socketio_instance = None
 activity_log = None
 # Thread-safe queue for cross-thread SocketIO emits
 emit_queue = None
-
-# ============================================================================
-# Authentication Token Management
-# ============================================================================
-
-class AuthTokenManager:
-    """Manages persistent authentication tokens that survive URL changes"""
-
-    def __init__(self, token_file='auth_tokens.json'):
-        self._token_file = token_file
-        self._tokens = {}
-        self._lock = threading.RLock()
-        self._load_tokens()
-
-    def _load_tokens(self):
-        """Load tokens from persistent storage"""
-        if os.path.exists(self._token_file):
-            try:
-                with open(self._token_file, 'r') as f:
-                    data = json.load(f)
-                    with self._lock:
-                        self._tokens = data
-                    print(f"[AuthTokenManager] Loaded {len(self._tokens)} tokens from {self._token_file}")
-            except Exception as e:
-                print(f"[AuthTokenManager] Error loading tokens: {e}")
-                self._tokens = {}
-
-    def _save_tokens(self):
-        """Save tokens to persistent storage"""
-        try:
-            with self._lock:
-                tokens_to_save = dict(self._tokens)
-
-            with open(self._token_file, 'w') as f:
-                json.dump(tokens_to_save, f, indent=2)
-        except Exception as e:
-            print(f"[AuthTokenManager] Error saving tokens: {e}")
-
-    def generate_token(self, username, remember_me=False):
-        """Generate a new authentication token"""
-        token = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-
-        # Set expiration based on remember_me
-        if remember_me:
-            expiration = (datetime.now() + timedelta(days=90)).isoformat()
-        else:
-            expiration = (datetime.now() + timedelta(days=7)).isoformat()
-
-        with self._lock:
-            self._tokens[token_hash] = {
-                'username': username,
-                'created': datetime.now().isoformat(),
-                'expiration': expiration,
-                'last_used': datetime.now().isoformat()
-            }
-            self._save_tokens()
-
-        print(f"[AuthTokenManager] Generated new token for {username} (remember_me={remember_me})")
-        return token
-
-    def validate_token(self, token):
-        """Validate a token and return username if valid"""
-        if not token:
-            return None
-
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-
-        with self._lock:
-            token_data = self._tokens.get(token_hash)
-
-            if not token_data:
-                return None
-
-            # Check if token has expired
-            expiration = datetime.fromisoformat(token_data['expiration'])
-            if datetime.now() > expiration:
-                print(f"[AuthTokenManager] Token expired for {token_data['username']}")
-                del self._tokens[token_hash]
-                self._save_tokens()
-                return None
-
-            # Update last used time
-            token_data['last_used'] = datetime.now().isoformat()
-            self._save_tokens()
-
-            return token_data['username']
-
-    def revoke_token(self, token):
-        """Revoke a specific token"""
-        if not token:
-            return False
-
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-
-        with self._lock:
-            if token_hash in self._tokens:
-                username = self._tokens[token_hash]['username']
-                del self._tokens[token_hash]
-                self._save_tokens()
-                print(f"[AuthTokenManager] Revoked token for {username}")
-                return True
-
-        return False
-
-    def cleanup_expired_tokens(self):
-        """Remove expired tokens from storage"""
-        with self._lock:
-            expired = []
-            for token_hash, token_data in self._tokens.items():
-                expiration = datetime.fromisoformat(token_data['expiration'])
-                if datetime.now() > expiration:
-                    expired.append(token_hash)
-
-            for token_hash in expired:
-                del self._tokens[token_hash]
-
-            if expired:
-                self._save_tokens()
-                print(f"[AuthTokenManager] Cleaned up {len(expired)} expired tokens")
-
-
-# Global token manager instance
-auth_token_manager = None
-
 
 # ============================================================================
 # Config File Helper
@@ -656,36 +529,18 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 # ============================================================================
 
 def login_required(f):
-    """Decorator to require login for routes - supports both session and token auth"""
+    """Decorator to require login for routes"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Check session-based auth first (for backwards compatibility)
-        if session.get('authenticated'):
-            return f(*args, **kwargs)
-
-        # Check token-based auth from cookie
-        auth_token = request.cookies.get('auth_token')
-        if auth_token and auth_token_manager:
-            username = auth_token_manager.validate_token(auth_token)
-            if username:
-                # Token is valid, user is authenticated
-                return f(*args, **kwargs)
-
-        # Not authenticated via session or token
-        return redirect(url_for('login'))
+        if not session.get('authenticated'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
     return decorated_function
 
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Login page with persistent token support"""
-    # Check if already authenticated via token
-    auth_token = request.cookies.get('auth_token')
-    if auth_token and auth_token_manager:
-        username = auth_token_manager.validate_token(auth_token)
-        if username:
-            return redirect(url_for('index'))
-
+    """Login page"""
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -693,34 +548,9 @@ def login():
         # Validate credentials (plain password comparison)
         if (username == CONFIG['dashboard']['username'] and
             password == CONFIG['dashboard']['password']):
-
-            # Set session for backwards compatibility
             session['authenticated'] = True
             session.permanent = True
-
-            # Generate persistent token (always use long-lived tokens)
-            if auth_token_manager:
-                token = auth_token_manager.generate_token(username, remember_me=True)
-
-                # Create response with redirect
-                response = make_response(redirect(url_for('index')))
-
-                # Set token in cookie (HttpOnly for security, 90 days expiration)
-                max_age = 90 * 24 * 60 * 60  # 90 days
-                response.set_cookie(
-                    'auth_token',
-                    token,
-                    max_age=max_age,
-                    httponly=True,
-                    secure=False,  # Set to True if using HTTPS
-                    samesite='Lax'
-                )
-
-                print(f"[Auth] User {username} logged in with 90-day token")
-                return response
-            else:
-                # Fallback to session-only if token manager not available
-                return redirect(url_for('index'))
+            return redirect(url_for('index'))
         else:
             return render_template('login.html', error='Invalid credentials')
 
@@ -729,21 +559,9 @@ def login():
 
 @app.route('/logout')
 def logout():
-    """Logout - clear session and revoke token"""
-    # Revoke token if present
-    auth_token = request.cookies.get('auth_token')
-    if auth_token and auth_token_manager:
-        auth_token_manager.revoke_token(auth_token)
-        print(f"[Auth] Token revoked on logout")
-
-    # Clear session
+    """Logout and clear session"""
     session.clear()
-
-    # Create response and clear cookie
-    response = make_response(redirect(url_for('login')))
-    response.set_cookie('auth_token', '', expires=0)
-
-    return response
+    return redirect(url_for('login'))
 
 
 @app.route('/')
@@ -1043,7 +861,7 @@ def signal_handler(sig, frame):
 
 def main():
     """Main application entry point"""
-    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue, auth_token_manager
+    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue
 
     print("=" * 60)
     print("WiFi Controller Dashboard")
@@ -1051,12 +869,6 @@ def main():
 
     # Initialize thread-safe queue for cross-thread SocketIO emits
     emit_queue = queue.Queue()
-
-    # Initialize authentication token manager
-    auth_token_manager = AuthTokenManager(token_file='auth_tokens.json')
-    # Cleanup expired tokens on startup
-    auth_token_manager.cleanup_expired_tokens()
-    print("[Main] Authentication token manager initialized")
 
     # Initialize components
     activity_log = ActivityLog(max_entries=25, socketio=socketio)
