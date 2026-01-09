@@ -39,11 +39,14 @@ emit_queue = None
 class AuthTokenManager:
     """Manages persistent authentication tokens that survive URL changes"""
 
-    def __init__(self, token_file='auth_tokens.json'):
+    def __init__(self, token_file='auth_tokens.json', device_file='trusted_devices.json'):
         self._token_file = token_file
+        self._device_file = device_file
         self._tokens = {}
+        self._trusted_devices = {}
         self._lock = threading.RLock()
         self._load_tokens()
+        self._load_trusted_devices()
 
     def _load_tokens(self):
         """Load tokens from persistent storage"""
@@ -151,6 +154,71 @@ class AuthTokenManager:
             if expired:
                 self._save_tokens()
                 print(f"[AuthTokenManager] Cleaned up {len(expired)} expired tokens")
+
+    def _load_trusted_devices(self):
+        """Load trusted devices from persistent storage"""
+        if os.path.exists(self._device_file):
+            try:
+                with open(self._device_file, 'r') as f:
+                    data = json.load(f)
+                    with self._lock:
+                        self._trusted_devices = data
+                    print(f"[AuthTokenManager] Loaded {len(self._trusted_devices)} trusted devices from {self._device_file}")
+            except Exception as e:
+                print(f"[AuthTokenManager] Error loading trusted devices: {e}")
+                self._trusted_devices = {}
+
+    def _save_trusted_devices(self):
+        """Save trusted devices to persistent storage"""
+        try:
+            with self._lock:
+                devices_to_save = dict(self._trusted_devices)
+
+            with open(self._device_file, 'w') as f:
+                json.dump(devices_to_save, f, indent=2)
+        except Exception as e:
+            print(f"[AuthTokenManager] Error saving trusted devices: {e}")
+
+    def generate_device_fingerprint(self, user_agent, accept_language):
+        """Generate a device fingerprint from browser characteristics"""
+        fingerprint_data = f"{user_agent}|{accept_language}"
+        fingerprint = hashlib.sha256(fingerprint_data.encode()).hexdigest()
+        return fingerprint
+
+    def trust_device(self, fingerprint, username):
+        """Mark a device as trusted for auto-login"""
+        with self._lock:
+            self._trusted_devices[fingerprint] = {
+                'username': username,
+                'trusted_at': datetime.now().isoformat(),
+                'last_seen': datetime.now().isoformat()
+            }
+            self._save_trusted_devices()
+        print(f"[AuthTokenManager] Device {fingerprint[:8]}... trusted for {username}")
+
+    def is_device_trusted(self, fingerprint):
+        """Check if a device is trusted and return username if so"""
+        with self._lock:
+            device_data = self._trusted_devices.get(fingerprint)
+
+            if not device_data:
+                return None
+
+            # Update last seen time
+            device_data['last_seen'] = datetime.now().isoformat()
+            self._save_trusted_devices()
+
+            return device_data['username']
+
+    def untrust_device(self, fingerprint):
+        """Remove a device from trusted devices"""
+        with self._lock:
+            if fingerprint in self._trusted_devices:
+                del self._trusted_devices[fingerprint]
+                self._save_trusted_devices()
+                print(f"[AuthTokenManager] Device {fingerprint[:8]}... untrusted")
+                return True
+        return False
 
 
 # Global token manager instance
@@ -687,7 +755,23 @@ def login_required(f):
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Login page with persistent token support"""
+    """Login page with persistent token support and device fingerprinting"""
+    # Generate device fingerprint
+    user_agent = request.headers.get('User-Agent', '')
+    accept_language = request.headers.get('Accept-Language', '')
+    device_fingerprint = None
+
+    if auth_token_manager:
+        device_fingerprint = auth_token_manager.generate_device_fingerprint(user_agent, accept_language)
+
+        # Check if device is trusted for auto-login
+        trusted_username = auth_token_manager.is_device_trusted(device_fingerprint)
+        if trusted_username:
+            print(f"[Auth] Auto-login for trusted device {device_fingerprint[:8]}...")
+            session['authenticated'] = True
+            session.permanent = True
+            return redirect(url_for('index'))
+
     # Check if already authenticated via token (from localStorage or cookie)
     auth_token = request.cookies.get('auth_token')
     if not auth_token:
@@ -719,7 +803,11 @@ def login():
             if auth_token_manager:
                 token = auth_token_manager.generate_token(username, remember_me=True)
 
-                print(f"[Auth] User {username} logged in with 90-day token")
+                # Trust this device for future auto-login
+                if device_fingerprint:
+                    auth_token_manager.trust_device(device_fingerprint, username)
+
+                print(f"[Auth] User {username} logged in with 90-day token (device {device_fingerprint[:8] if device_fingerprint else 'unknown'}...)")
 
                 # For AJAX requests, return JSON with token
                 if is_ajax:
@@ -759,12 +847,19 @@ def login():
 
 @app.route('/logout')
 def logout():
-    """Logout - clear session and revoke token"""
+    """Logout - clear session, revoke token, and untrust device"""
     # Revoke token if present
     auth_token = request.cookies.get('auth_token')
     if auth_token and auth_token_manager:
         auth_token_manager.revoke_token(auth_token)
         print(f"[Auth] Token revoked on logout")
+
+    # Untrust device
+    if auth_token_manager:
+        user_agent = request.headers.get('User-Agent', '')
+        accept_language = request.headers.get('Accept-Language', '')
+        device_fingerprint = auth_token_manager.generate_device_fingerprint(user_agent, accept_language)
+        auth_token_manager.untrust_device(device_fingerprint)
 
     # Clear session
     session.clear()
