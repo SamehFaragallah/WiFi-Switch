@@ -5,6 +5,78 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WiFi Controller - Login</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Check for existing token on page load and auto-login
+        document.addEventListener('DOMContentLoaded', function() {
+            const token = localStorage.getItem('auth_token');
+            if (token) {
+                // Try to verify token by making a request with it
+                fetch('/', {
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    },
+                    redirect: 'manual'
+                }).then(response => {
+                    if (response.type === 'opaqueredirect' || response.ok) {
+                        // Token is valid, redirect to dashboard
+                        window.location.href = '/';
+                    } else if (response.status === 401) {
+                        // Token expired, remove it
+                        localStorage.removeItem('auth_token');
+                    }
+                }).catch(() => {
+                    // Network error, token might still be valid, try redirecting anyway
+                    window.location.href = '/';
+                });
+            }
+        });
+
+        // Handle form submission with AJAX to get token
+        function handleLogin(event) {
+            event.preventDefault();
+
+            const form = event.target;
+            const username = form.username.value;
+            const password = form.password.value;
+            const errorDiv = document.getElementById('error-message');
+            const submitBtn = form.querySelector('button[type="submit"]');
+
+            // Disable submit button
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Signing in...';
+
+            fetch('/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({ username, password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.token) {
+                    // Store token in localStorage
+                    localStorage.setItem('auth_token', data.token);
+                    // Redirect to dashboard
+                    window.location.href = data.redirect || '/';
+                } else {
+                    // Show error
+                    errorDiv.textContent = data.error || 'Invalid credentials';
+                    errorDiv.classList.remove('hidden');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Sign In';
+                }
+            })
+            .catch(error => {
+                console.error('Login error:', error);
+                errorDiv.textContent = 'An error occurred during login';
+                errorDiv.classList.remove('hidden');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Sign In';
+            });
+        }
+    </script>
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen flex items-center justify-center">
     <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
@@ -13,13 +85,11 @@
             <p class="text-gray-600">Sign in to access the dashboard</p>
         </div>
 
-        {% if error %}
-        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" role="alert">
-            <span class="block sm:inline">{{ error }}</span>
+        <div id="error-message" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 {% if not error %}hidden{% endif %}" role="alert">
+            <span class="block sm:inline">{% if error %}{{ error }}{% endif %}</span>
         </div>
-        {% endif %}
 
-        <form method="POST" action="/login">
+        <form method="POST" action="/login" onsubmit="handleLogin(event)">
             <div class="mb-6">
                 <label for="username" class="block text-gray-700 text-sm font-semibold mb-2">Username</label>
                 <input

@@ -656,7 +656,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 # ============================================================================
 
 def login_required(f):
-    """Decorator to require login for routes - supports both session and token auth"""
+    """Decorator to require login for routes - supports session, cookie, and header token auth"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         # Check session-based auth first (for backwards compatibility)
@@ -665,10 +665,19 @@ def login_required(f):
 
         # Check token-based auth from cookie
         auth_token = request.cookies.get('auth_token')
+
+        # Also check Authorization header (for localStorage-based tokens)
+        if not auth_token:
+            auth_header = request.headers.get('Authorization')
+            if auth_header and auth_header.startswith('Bearer '):
+                auth_token = auth_header[7:]  # Remove 'Bearer ' prefix
+
         if auth_token and auth_token_manager:
             username = auth_token_manager.validate_token(auth_token)
             if username:
                 # Token is valid, user is authenticated
+                # Set session for this request to avoid repeated token validation
+                session['authenticated'] = True
                 return f(*args, **kwargs)
 
         # Not authenticated via session or token
@@ -679,16 +688,24 @@ def login_required(f):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """Login page with persistent token support"""
-    # Check if already authenticated via token
+    # Check if already authenticated via token (from localStorage or cookie)
     auth_token = request.cookies.get('auth_token')
+    if not auth_token:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            auth_token = auth_header[7:]
+
     if auth_token and auth_token_manager:
         username = auth_token_manager.validate_token(auth_token)
         if username:
             return redirect(url_for('index'))
 
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
+        # Check if this is an AJAX request (JSON)
+        is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json
+
+        username = request.form.get('username') if not is_ajax else request.json.get('username')
+        password = request.form.get('password') if not is_ajax else request.json.get('password')
 
         # Validate credentials (plain password comparison)
         if (username == CONFIG['dashboard']['username'] and
@@ -702,26 +719,39 @@ def login():
             if auth_token_manager:
                 token = auth_token_manager.generate_token(username, remember_me=True)
 
-                # Create response with redirect
+                print(f"[Auth] User {username} logged in with 90-day token")
+
+                # For AJAX requests, return JSON with token
+                if is_ajax:
+                    return jsonify({
+                        'success': True,
+                        'token': token,
+                        'redirect': url_for('index')
+                    })
+
+                # For regular form submission, set cookie and redirect
                 response = make_response(redirect(url_for('index')))
 
-                # Set token in cookie (HttpOnly for security, 90 days expiration)
+                # Set token in cookie as backup (90 days expiration)
                 max_age = 90 * 24 * 60 * 60  # 90 days
                 response.set_cookie(
                     'auth_token',
                     token,
                     max_age=max_age,
                     httponly=True,
-                    secure=False,  # Set to True if using HTTPS
-                    samesite='Lax'
+                    secure=True,  # Required when samesite='None'
+                    samesite='None'  # Allows cookie to work across different domains
                 )
 
-                print(f"[Auth] User {username} logged in with 90-day token")
                 return response
             else:
                 # Fallback to session-only if token manager not available
+                if is_ajax:
+                    return jsonify({'success': True, 'redirect': url_for('index')})
                 return redirect(url_for('index'))
         else:
+            if is_ajax:
+                return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
             return render_template('login.html', error='Invalid credentials')
 
     return render_template('login.html')

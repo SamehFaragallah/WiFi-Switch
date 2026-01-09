@@ -20,7 +20,7 @@
                         </span>
                     </div>
                 </div>
-                <a href="/logout" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                <a href="#" onclick="handleLogout(); return false;" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200">
                     Logout
                 </a>
             </div>
@@ -168,10 +168,32 @@
     <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
 
     <script>
-        const socket = io();
+        // Check if token exists, if not redirect to login
+        const token = localStorage.getItem('auth_token');
+        if (!token) {
+            console.log('No token found, redirecting to login');
+            window.location.href = '/login';
+        }
+
+        // Initialize socket connection with auth token from localStorage
+        const socket = io({
+            auth: {
+                token: token
+            },
+            extraHeaders: token ? {
+                'Authorization': 'Bearer ' + token
+            } : {}
+        });
+
         let currentWiFiState = false;
         let countdownInterval = null;
         let isInitialLoad = true;
+
+        // Handle logout - clear localStorage
+        function handleLogout() {
+            localStorage.removeItem('auth_token');
+            window.location.href = '/logout';
+        }
 
         // Connection status
         socket.on('connect', () => {
