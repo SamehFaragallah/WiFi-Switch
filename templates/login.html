@@ -5,78 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WiFi Controller - Login</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        // Check for existing token on page load and auto-login
-        document.addEventListener('DOMContentLoaded', function() {
-            const token = localStorage.getItem('auth_token');
-            if (token) {
-                // Try to verify token by making a request with it
-                fetch('/', {
-                    headers: {
-                        'Authorization': 'Bearer ' + token
-                    },
-                    redirect: 'manual'
-                }).then(response => {
-                    if (response.type === 'opaqueredirect' || response.ok) {
-                        // Token is valid, redirect to dashboard
-                        window.location.href = '/';
-                    } else if (response.status === 401) {
-                        // Token expired, remove it
-                        localStorage.removeItem('auth_token');
-                    }
-                }).catch(() => {
-                    // Network error, token might still be valid, try redirecting anyway
-                    window.location.href = '/';
-                });
-            }
-        });
-
-        // Handle form submission with AJAX to get token
-        function handleLogin(event) {
-            event.preventDefault();
-
-            const form = event.target;
-            const username = form.username.value;
-            const password = form.password.value;
-            const errorDiv = document.getElementById('error-message');
-            const submitBtn = form.querySelector('button[type="submit"]');
-
-            // Disable submit button
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Signing in...';
-
-            fetch('/login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify({ username, password })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success && data.token) {
-                    // Store token in localStorage
-                    localStorage.setItem('auth_token', data.token);
-                    // Redirect to dashboard
-                    window.location.href = data.redirect || '/';
-                } else {
-                    // Show error
-                    errorDiv.textContent = data.error || 'Invalid credentials';
-                    errorDiv.classList.remove('hidden');
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = 'Sign In';
-                }
-            })
-            .catch(error => {
-                console.error('Login error:', error);
-                errorDiv.textContent = 'An error occurred during login';
-                errorDiv.classList.remove('hidden');
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Sign In';
-            });
-        }
-    </script>
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen flex items-center justify-center">
     <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
@@ -89,7 +17,7 @@
             <span class="block sm:inline">{% if error %}{{ error }}{% endif %}</span>
         </div>
 
-        <form method="POST" action="/login" onsubmit="handleLogin(event)">
+        <form method="POST" action="/login">
             <div class="mb-6">
                 <label for="username" class="block text-gray-700 text-sm font-semibold mb-2">Username</label>
                 <input

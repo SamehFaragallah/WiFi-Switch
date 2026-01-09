@@ -9,10 +9,9 @@ import sys
 import json
 import os
 import queue
-import secrets
 import hashlib
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, session, redirect, url_for, jsonify, make_response
+from flask import Flask, render_template, request, session, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from functools import wraps
@@ -37,123 +36,13 @@ emit_queue = None
 # ============================================================================
 
 class AuthTokenManager:
-    """Manages persistent authentication tokens that survive URL changes"""
+    """Manages trusted devices for persistent authentication across URL changes"""
 
-    def __init__(self, token_file='auth_tokens.json', device_file='trusted_devices.json'):
-        self._token_file = token_file
+    def __init__(self, device_file='trusted_devices.json'):
         self._device_file = device_file
-        self._tokens = {}
         self._trusted_devices = {}
         self._lock = threading.RLock()
-        self._load_tokens()
         self._load_trusted_devices()
-
-    def _load_tokens(self):
-        """Load tokens from persistent storage"""
-        if os.path.exists(self._token_file):
-            try:
-                with open(self._token_file, 'r') as f:
-                    data = json.load(f)
-                    with self._lock:
-                        self._tokens = data
-                    print(f"[AuthTokenManager] Loaded {len(self._tokens)} tokens from {self._token_file}")
-            except Exception as e:
-                print(f"[AuthTokenManager] Error loading tokens: {e}")
-                self._tokens = {}
-
-    def _save_tokens(self):
-        """Save tokens to persistent storage"""
-        try:
-            with self._lock:
-                tokens_to_save = dict(self._tokens)
-
-            with open(self._token_file, 'w') as f:
-                json.dump(tokens_to_save, f, indent=2)
-        except Exception as e:
-            print(f"[AuthTokenManager] Error saving tokens: {e}")
-
-    def generate_token(self, username, remember_me=False):
-        """Generate a new authentication token"""
-        token = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-
-        # Set expiration based on remember_me
-        if remember_me:
-            expiration = (datetime.now() + timedelta(days=90)).isoformat()
-        else:
-            expiration = (datetime.now() + timedelta(days=7)).isoformat()
-
-        with self._lock:
-            self._tokens[token_hash] = {
-                'username': username,
-                'created': datetime.now().isoformat(),
-                'expiration': expiration,
-                'last_used': datetime.now().isoformat()
-            }
-            self._save_tokens()
-
-        print(f"[AuthTokenManager] Generated new token for {username} (remember_me={remember_me})")
-        return token
-
-    def validate_token(self, token):
-        """Validate a token and return username if valid"""
-        if not token:
-            return None
-
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-
-        with self._lock:
-            token_data = self._tokens.get(token_hash)
-
-            if not token_data:
-                return None
-
-            # Check if token has expired
-            expiration = datetime.fromisoformat(token_data['expiration'])
-            if datetime.now() > expiration:
-                print(f"[AuthTokenManager] Token expired for {token_data['username']}")
-                del self._tokens[token_hash]
-                self._save_tokens()
-                return None
-
-            # Update last used time
-            token_data['last_used'] = datetime.now().isoformat()
-            self._save_tokens()
-
-            return token_data['username']
-
-    def revoke_token(self, token):
-        """Revoke a specific token"""
-        if not token:
-            return False
-
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-
-        with self._lock:
-            if token_hash in self._tokens:
-                username = self._tokens[token_hash]['username']
-                del self._tokens[token_hash]
-                self._save_tokens()
-                print(f"[AuthTokenManager] Revoked token for {username}")
-                return True
-
-        return False
-
-    def cleanup_expired_tokens(self):
-        """Remove expired tokens from storage"""
-        with self._lock:
-            expired = []
-            for token_hash, token_data in self._tokens.items():
-                expiration = datetime.fromisoformat(token_data['expiration'])
-                if datetime.now() > expiration:
-                    expired.append(token_hash)
-
-            for token_hash in expired:
-                del self._tokens[token_hash]
-
-            if expired:
-                self._save_tokens()
-                print(f"[AuthTokenManager] Cleaned up {len(expired)} expired tokens")
 
     def _load_trusted_devices(self):
         """Load trusted devices from persistent storage"""
@@ -724,38 +613,18 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 # ============================================================================
 
 def login_required(f):
-    """Decorator to require login for routes - supports session, cookie, and header token auth"""
+    """Decorator to require login for routes - uses session-based auth"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Check session-based auth first (for backwards compatibility)
-        if session.get('authenticated'):
-            return f(*args, **kwargs)
-
-        # Check token-based auth from cookie
-        auth_token = request.cookies.get('auth_token')
-
-        # Also check Authorization header (for localStorage-based tokens)
-        if not auth_token:
-            auth_header = request.headers.get('Authorization')
-            if auth_header and auth_header.startswith('Bearer '):
-                auth_token = auth_header[7:]  # Remove 'Bearer ' prefix
-
-        if auth_token and auth_token_manager:
-            username = auth_token_manager.validate_token(auth_token)
-            if username:
-                # Token is valid, user is authenticated
-                # Set session for this request to avoid repeated token validation
-                session['authenticated'] = True
-                return f(*args, **kwargs)
-
-        # Not authenticated via session or token
-        return redirect(url_for('login'))
+        if not session.get('authenticated'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
     return decorated_function
 
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    """Login page with persistent token support and device fingerprinting"""
+    """Login page with device fingerprinting for auto-login"""
     # Generate device fingerprint
     user_agent = request.headers.get('User-Agent', '')
     accept_language = request.headers.get('Accept-Language', '')
@@ -772,74 +641,25 @@ def login():
             session.permanent = True
             return redirect(url_for('index'))
 
-    # Check if already authenticated via token (from localStorage or cookie)
-    auth_token = request.cookies.get('auth_token')
-    if not auth_token:
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            auth_token = auth_header[7:]
-
-    if auth_token and auth_token_manager:
-        username = auth_token_manager.validate_token(auth_token)
-        if username:
-            return redirect(url_for('index'))
-
     if request.method == 'POST':
-        # Check if this is an AJAX request (JSON)
-        is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json
+        username = request.form.get('username')
+        password = request.form.get('password')
 
-        username = request.form.get('username') if not is_ajax else request.json.get('username')
-        password = request.form.get('password') if not is_ajax else request.json.get('password')
-
-        # Validate credentials (plain password comparison)
+        # Validate credentials
         if (username == CONFIG['dashboard']['username'] and
             password == CONFIG['dashboard']['password']):
 
-            # Set session for backwards compatibility
+            # Set session
             session['authenticated'] = True
             session.permanent = True
 
-            # Generate persistent token (always use long-lived tokens)
-            if auth_token_manager:
-                token = auth_token_manager.generate_token(username, remember_me=True)
+            # Trust this device for future auto-login
+            if auth_token_manager and device_fingerprint:
+                auth_token_manager.trust_device(device_fingerprint, username)
+                print(f"[Auth] User {username} logged in (device {device_fingerprint[:8]}...)")
 
-                # Trust this device for future auto-login
-                if device_fingerprint:
-                    auth_token_manager.trust_device(device_fingerprint, username)
-
-                print(f"[Auth] User {username} logged in with 90-day token (device {device_fingerprint[:8] if device_fingerprint else 'unknown'}...)")
-
-                # For AJAX requests, return JSON with token
-                if is_ajax:
-                    return jsonify({
-                        'success': True,
-                        'token': token,
-                        'redirect': url_for('index')
-                    })
-
-                # For regular form submission, set cookie and redirect
-                response = make_response(redirect(url_for('index')))
-
-                # Set token in cookie as backup (90 days expiration)
-                max_age = 90 * 24 * 60 * 60  # 90 days
-                response.set_cookie(
-                    'auth_token',
-                    token,
-                    max_age=max_age,
-                    httponly=True,
-                    secure=True,  # Required when samesite='None'
-                    samesite='None'  # Allows cookie to work across different domains
-                )
-
-                return response
-            else:
-                # Fallback to session-only if token manager not available
-                if is_ajax:
-                    return jsonify({'success': True, 'redirect': url_for('index')})
-                return redirect(url_for('index'))
+            return redirect(url_for('index'))
         else:
-            if is_ajax:
-                return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
             return render_template('login.html', error='Invalid credentials')
 
     return render_template('login.html')
@@ -847,13 +667,7 @@ def login():
 
 @app.route('/logout')
 def logout():
-    """Logout - clear session, revoke token, and untrust device"""
-    # Revoke token if present
-    auth_token = request.cookies.get('auth_token')
-    if auth_token and auth_token_manager:
-        auth_token_manager.revoke_token(auth_token)
-        print(f"[Auth] Token revoked on logout")
-
+    """Logout - clear session and untrust device"""
     # Untrust device
     if auth_token_manager:
         user_agent = request.headers.get('User-Agent', '')
@@ -864,11 +678,7 @@ def logout():
     # Clear session
     session.clear()
 
-    # Create response and clear cookie
-    response = make_response(redirect(url_for('login')))
-    response.set_cookie('auth_token', '', expires=0)
-
-    return response
+    return redirect(url_for('login'))
 
 
 @app.route('/')
@@ -1177,11 +987,9 @@ def main():
     # Initialize thread-safe queue for cross-thread SocketIO emits
     emit_queue = queue.Queue()
 
-    # Initialize authentication token manager
-    auth_token_manager = AuthTokenManager(token_file='auth_tokens.json')
-    # Cleanup expired tokens on startup
-    auth_token_manager.cleanup_expired_tokens()
-    print("[Main] Authentication token manager initialized")
+    # Initialize authentication manager (device fingerprinting)
+    auth_token_manager = AuthTokenManager(device_file='trusted_devices.json')
+    print("[Main] Device fingerprinting authentication initialized")
 
     # Initialize components
     activity_log = ActivityLog(max_entries=25, socketio=socketio)

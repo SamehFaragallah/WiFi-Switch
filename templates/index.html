@@ -168,30 +168,15 @@
     <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
 
     <script>
-        // Check if token exists, if not redirect to login
-        const token = localStorage.getItem('auth_token');
-        if (!token) {
-            console.log('No token found, redirecting to login');
-            window.location.href = '/login';
-        }
-
-        // Initialize socket connection with auth token from localStorage
-        const socket = io({
-            auth: {
-                token: token
-            },
-            extraHeaders: token ? {
-                'Authorization': 'Bearer ' + token
-            } : {}
-        });
+        // Initialize socket connection
+        const socket = io();
 
         let currentWiFiState = false;
         let countdownInterval = null;
         let isInitialLoad = true;
 
-        // Handle logout - clear localStorage
+        // Handle logout
         function handleLogout() {
-            localStorage.removeItem('auth_token');
             window.location.href = '/logout';
         }
 
