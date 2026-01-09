@@ -561,7 +561,7 @@ def index():
 
 
 @app.route('/getstatus')
-def index():
+def getStatusAPI():
     return jsonify({'status': 'ON'}), 200
 
 
