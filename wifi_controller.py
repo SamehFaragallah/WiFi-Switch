@@ -10,7 +10,7 @@ import json
 import os
 import queue
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, session, redirect, url_for
+from flask import Flask, render_template, request, session, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit
 from functools import wraps
 from config import CONFIG
