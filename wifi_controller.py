@@ -560,6 +560,11 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/getstatus')
+def index():
+    return jsonify({'status': 'ON'}), 200
+
+
 # ============================================================================
 # SocketIO Event Handlers
 # ============================================================================
