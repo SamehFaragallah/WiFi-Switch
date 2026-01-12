@@ -920,10 +920,10 @@ app = Flask(__name__)
 
 CORS(app, resources={
     r"/getstatus": {
-        "origins": [
-            "https://rock.lcbcchurch.com",
-            "https://lcbcchurch.com"
-        ]
+        "origins": "*"
+    },
+    r"/getpowerstatus": {
+        "origins": "*"
     }
 })
 
@@ -1012,10 +1012,9 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/getstatus')
-def getStatusAPI():
+def _get_wifi_status():
     """
-    REST API endpoint to get actual WiFi status
+    Helper function to get actual WiFi status
     Returns the same status as LED_STATUS indicator:
     - If ALWAYS ON mode: WiFi is ON
     - If Schedule mode: WiFi status follows the schedule
@@ -1033,11 +1032,18 @@ def getStatusAPI():
         else:
             actual_status = 'OFF'
 
-    return jsonify({
+    return {
         'status': actual_status,
         'mode': 'ALWAYS_ON' if wifi_state else 'SCHEDULE',
         'timestamp': datetime.now().isoformat()
-    }), 200
+    }
+
+
+@app.route('/getstatus')
+def getStatusAPI():
+    """REST API endpoint to get actual WiFi status"""
+    return jsonify(_get_wifi_status()), 200
+
 
 @app.route('/getpowerstatus')
 def getPowerStatusAPI():
