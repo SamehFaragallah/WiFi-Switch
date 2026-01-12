@@ -58,6 +58,15 @@
                     <p class="text-sm text-gray-600 mb-1">Auto-off in</p>
                     <p id="countdown-display" class="text-2xl font-bold text-blue-600">0h 0m</p>
                 </div>
+
+                <!-- Actual WiFi Status -->
+                <div class="mt-6 bg-gray-50 border border-gray-300 rounded-lg p-4 text-center">
+                    <p class="text-sm text-gray-600 mb-1">Actual WiFi Status</p>
+                    <div class="flex items-center justify-center gap-2">
+                        <div id="actual-wifi-indicator" class="w-3 h-3 rounded-full bg-gray-400"></div>
+                        <p id="actual-wifi-status" class="text-lg font-bold text-gray-700">Unknown</p>
+                    </div>
+                </div>
             </div>
 
             <!-- Settings Card -->
@@ -746,6 +755,12 @@
             }
         });
 
+        // Actual WiFi status update
+        socket.on('wifi_actual_status', (data) => {
+            console.log('Actual WiFi status:', data);
+            updateActualWiFiStatus(data.is_on);
+        });
+
         // Update WiFi display
         function updateWiFiDisplay(state) {
             const circle = document.getElementById('wifi-status-circle');
@@ -786,6 +801,26 @@
             const hours = Math.floor(remainingMinutes / 60);
             const minutes = remainingMinutes % 60;
             document.getElementById('countdown-display').textContent = `${hours}h ${minutes}m`;
+        }
+
+        // Update actual WiFi status display
+        function updateActualWiFiStatus(isOn) {
+            const indicator = document.getElementById('actual-wifi-indicator');
+            const statusText = document.getElementById('actual-wifi-status');
+
+            if (isOn) {
+                indicator.classList.remove('bg-gray-400', 'bg-red-500');
+                indicator.classList.add('bg-green-500');
+                statusText.textContent = 'ON';
+                statusText.classList.remove('text-gray-700', 'text-red-600');
+                statusText.classList.add('text-green-600');
+            } else {
+                indicator.classList.remove('bg-gray-400', 'bg-green-500');
+                indicator.classList.add('bg-red-500');
+                statusText.textContent = 'OFF';
+                statusText.classList.remove('text-gray-700', 'text-green-600');
+                statusText.classList.add('text-red-600');
+            }
         }
 
         // Update connection status

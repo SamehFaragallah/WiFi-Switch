@@ -600,6 +600,22 @@ class WiFiStateManager:
                 )
                 print(f"[WiFiStateManager] Broadcasted state change to all clients")
 
+                # Also broadcast actual WiFi status (based on state and schedule)
+                actual_status = new_state  # Default to new_state
+                if not new_state and wifi_scheduler:
+                    # WiFi is OFF - check schedule
+                    within_schedule, _ = wifi_scheduler.is_within_schedule()
+                    actual_status = within_schedule
+
+                safe_emit_from_thread(
+                    self.socketio,
+                    'wifi_actual_status',
+                    {
+                        'is_on': actual_status,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                )
+
         return state_changed
 
 
@@ -998,7 +1014,30 @@ def index():
 
 @app.route('/getstatus')
 def getStatusAPI():
-    return jsonify({'status': 'ON'}), 200
+    """
+    REST API endpoint to get actual WiFi status
+    Returns the same status as LED_STATUS indicator:
+    - If ALWAYS ON mode: WiFi is ON
+    - If Schedule mode: WiFi status follows the schedule
+    """
+    wifi_state = state_manager.get_state()
+
+    if wifi_state:
+        # ALWAYS ON mode - WiFi is ON
+        actual_status = 'ON'
+    else:
+        # Schedule mode - check if within schedule
+        if wifi_scheduler:
+            within_schedule, _ = wifi_scheduler.is_within_schedule()
+            actual_status = 'ON' if within_schedule else 'OFF'
+        else:
+            actual_status = 'OFF'
+
+    return jsonify({
+        'status': actual_status,
+        'mode': 'ALWAYS_ON' if wifi_state else 'SCHEDULE',
+        'timestamp': datetime.now().isoformat()
+    }), 200
 
 
 # ============================================================================
@@ -1055,6 +1094,26 @@ def handle_disconnect():
     print("[SocketIO] Client disconnected")
 
 
+def get_actual_wifi_status():
+    """
+    Get the actual WiFi status based on state manager and schedule.
+    Uses the same logic as LED_STATUS:
+    - If state is ON (ALWAYS ON mode): WiFi is actually ON
+    - If state is OFF: WiFi status follows the schedule (ON if within schedule, OFF if not)
+    """
+    wifi_state = state_manager.get_state()
+
+    if wifi_state:
+        # ALWAYS ON mode - WiFi is ON
+        return True
+    else:
+        # WiFi is OFF - check schedule
+        if wifi_scheduler:
+            within_schedule, _ = wifi_scheduler.is_within_schedule()
+            return within_schedule
+        return False
+
+
 @socketio.on('get_current_state')
 def handle_get_current_state():
     """Send current WiFi state and timer info"""
@@ -1069,6 +1128,12 @@ def handle_get_current_state():
             'remaining_seconds': auto_off_timer.get_remaining_seconds(),
             'remaining_minutes': auto_off_timer.get_remaining_seconds() // 60
         })
+
+    # Send actual WiFi status
+    emit('wifi_actual_status', {
+        'is_on': get_actual_wifi_status(),
+        'timestamp': datetime.now().isoformat()
+    })
 
 
 @socketio.on('toggle_wifi')
@@ -1503,6 +1568,17 @@ def schedule_checker_loop():
                     print(f"[ScheduleChecker] Schedule inactive")
                     led_controller.set_led_state('status', False)
                     print(f"[ScheduleChecker] LED_STATUS turned OFF (schedule ended)")
+
+                # Broadcast actual WiFi status change to dashboard
+                if socketio:
+                    safe_emit_from_thread(
+                        socketio,
+                        'wifi_actual_status',
+                        {
+                            'is_on': within_schedule,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                    )
 
                 last_within_schedule = within_schedule
 
