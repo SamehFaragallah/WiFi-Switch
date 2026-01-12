@@ -188,6 +188,82 @@
                     </div>
                 </div>
 
+                <!-- WiFi Schedule -->
+                <div class="mb-6">
+                    <label class="block text-gray-700 font-semibold mb-3">
+                        WiFi Schedule
+                    </label>
+                    <p class="text-sm text-gray-600 mb-3">
+                        Define when WiFi should be scheduled. Scheduled LED is ON when WiFi is in Always On mode, or when within scheduled hours while OFF.
+                    </p>
+
+                    <!-- Schedule Entries List -->
+                    <div id="schedule-entries" class="space-y-2 mb-4">
+                        <p class="text-sm text-gray-500">No schedule entries yet</p>
+                    </div>
+
+                    <!-- Add New Schedule Button -->
+                    <button
+                        onclick="toggleAddScheduleForm()"
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition duration-200 text-sm"
+                    >
+                        + Add Schedule Entry
+                    </button>
+
+                    <!-- Add Schedule Form (hidden by default) -->
+                    <div id="add-schedule-form" class="hidden mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <h4 class="font-semibold text-gray-700 mb-3">New Schedule Entry</h4>
+
+                        <!-- Days of Week -->
+                        <div class="mb-3">
+                            <label class="block text-sm text-gray-600 mb-2">Days</label>
+                            <div class="grid grid-cols-7 gap-1">
+                                <button type="button" onclick="toggleDay(0)" data-day="0" class="day-btn px-2 py-1 text-xs border border-gray-300 rounded hover:bg-blue-100">Mon</button>
+                                <button type="button" onclick="toggleDay(1)" data-day="1" class="day-btn px-2 py-1 text-xs border border-gray-300 rounded hover:bg-blue-100">Tue</button>
+                                <button type="button" onclick="toggleDay(2)" data-day="2" class="day-btn px-2 py-1 text-xs border border-gray-300 rounded hover:bg-blue-100">Wed</button>
+                                <button type="button" onclick="toggleDay(3)" data-day="3" class="day-btn px-2 py-1 text-xs border border-gray-300 rounded hover:bg-blue-100">Thu</button>
+                                <button type="button" onclick="toggleDay(4)" data-day="4" class="day-btn px-2 py-1 text-xs border border-gray-300 rounded hover:bg-blue-100">Fri</button>
+                                <button type="button" onclick="toggleDay(5)" data-day="5" class="day-btn px-2 py-1 text-xs border border-gray-300 rounded hover:bg-blue-100">Sat</button>
+                                <button type="button" onclick="toggleDay(6)" data-day="6" class="day-btn px-2 py-1 text-xs border border-gray-300 rounded hover:bg-blue-100">Sun</button>
+                            </div>
+                        </div>
+
+                        <!-- Time Range -->
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <div>
+                                <label class="block text-sm text-gray-600 mb-1">Start Time</label>
+                                <input type="time" id="schedule-start-time" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-gray-600 mb-1">End Time</label>
+                                <input type="time" id="schedule-end-time" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                            </div>
+                        </div>
+
+                        <!-- Description -->
+                        <div class="mb-3">
+                            <label class="block text-sm text-gray-600 mb-1">Description (optional)</label>
+                            <input type="text" id="schedule-description" placeholder="e.g., Weekday hours" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="flex gap-2">
+                            <button
+                                onclick="saveScheduleEntry()"
+                                class="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition duration-200 text-sm"
+                            >
+                                Save
+                            </button>
+                            <button
+                                onclick="toggleAddScheduleForm()"
+                                class="flex-1 bg-gray-400 hover:bg-gray-500 text-white px-4 py-2 rounded-lg transition duration-200 text-sm"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- SSH Status -->
                 <div class="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                     <div class="flex items-center gap-2">
@@ -505,6 +581,118 @@
                     valueSpan.textContent = `${data.brightness}%`;
                 }
                 showToast(`${data.led.replace('_', ' ')} LED brightness: ${data.brightness}%`, 'success');
+            }
+        });
+
+        // Schedule management
+        let selectedDays = new Set();
+
+        function toggleAddScheduleForm() {
+            const form = document.getElementById('add-schedule-form');
+            if (form.classList.contains('hidden')) {
+                form.classList.remove('hidden');
+                // Reset form
+                selectedDays.clear();
+                document.querySelectorAll('.day-btn').forEach(btn => {
+                    btn.classList.remove('bg-blue-500', 'text-white');
+                });
+                document.getElementById('schedule-start-time').value = '';
+                document.getElementById('schedule-end-time').value = '';
+                document.getElementById('schedule-description').value = '';
+            } else {
+                form.classList.add('hidden');
+            }
+        }
+
+        function toggleDay(day) {
+            const dayBtn = document.querySelector(`[data-day="${day}"]`);
+            if (selectedDays.has(day)) {
+                selectedDays.delete(day);
+                dayBtn.classList.remove('bg-blue-500', 'text-white');
+            } else {
+                selectedDays.add(day);
+                dayBtn.classList.add('bg-blue-500', 'text-white');
+            }
+        }
+
+        function saveScheduleEntry() {
+            const startTime = document.getElementById('schedule-start-time').value;
+            const endTime = document.getElementById('schedule-end-time').value;
+            const description = document.getElementById('schedule-description').value.trim();
+
+            if (selectedDays.size === 0) {
+                showToast('Please select at least one day', 'error');
+                return;
+            }
+
+            if (!startTime || !endTime) {
+                showToast('Please enter start and end times', 'error');
+                return;
+            }
+
+            console.log('Adding schedule entry:', {
+                days: Array.from(selectedDays),
+                start_time: startTime,
+                end_time: endTime,
+                description: description
+            });
+
+            socket.emit('add_schedule_entry', {
+                days: Array.from(selectedDays),
+                start_time: startTime,
+                end_time: endTime,
+                description: description
+            });
+
+            toggleAddScheduleForm();
+        }
+
+        function removeScheduleEntry(entryId) {
+            if (confirm('Are you sure you want to delete this schedule entry?')) {
+                console.log('Removing schedule entry:', entryId);
+                socket.emit('remove_schedule_entry', { id: entryId });
+            }
+        }
+
+        function renderScheduleEntries(entries) {
+            const container = document.getElementById('schedule-entries');
+
+            if (!entries || entries.length === 0) {
+                container.innerHTML = '<p class="text-sm text-gray-500">No schedule entries yet</p>';
+                return;
+            }
+
+            const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+            container.innerHTML = entries.map(entry => {
+                const daysText = entry.days.sort((a, b) => a - b).map(d => dayNames[d]).join(', ');
+                const description = entry.description ? `<br><span class="text-xs text-gray-500">${entry.description}</span>` : '';
+
+                return `
+                    <div class="p-3 bg-white border border-gray-200 rounded-lg">
+                        <div class="flex justify-between items-start">
+                            <div class="flex-1">
+                                <div class="text-sm font-semibold text-gray-700">${daysText}</div>
+                                <div class="text-sm text-gray-600">${entry.start_time} - ${entry.end_time}</div>
+                                ${description}
+                            </div>
+                            <button
+                                onclick="removeScheduleEntry('${entry.id}')"
+                                class="text-red-500 hover:text-red-700 text-sm font-semibold ml-2"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Schedule updated (from server)
+        socket.on('schedule_updated', (data) => {
+            console.log('Schedule updated:', data);
+            if (data.entries) {
+                renderScheduleEntries(data.entries);
             }
         });
 

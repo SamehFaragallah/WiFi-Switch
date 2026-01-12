@@ -33,6 +33,7 @@ ssh_controller = None
 socketio_instance = None
 activity_log = None
 led_controller = None
+wifi_scheduler = None
 # Thread-safe queue for cross-thread SocketIO emits
 emit_queue = None
 
@@ -248,6 +249,123 @@ def emit_queue_processor(socketio_instance):
 # Thread-Safe State Management Classes
 # ============================================================================
 
+class WiFiScheduler:
+    """Manages WiFi schedule entries and checks if current time is within schedule"""
+
+    def __init__(self, schedule_file='wifi_schedule.json'):
+        self._schedule_file = schedule_file
+        self._lock = threading.RLock()
+        self._schedule_entries = []
+        self.socketio = None
+        self._load_schedule()
+
+    def _load_schedule(self):
+        """Load schedule from file"""
+        try:
+            if os.path.exists(self._schedule_file):
+                with open(self._schedule_file, 'r') as f:
+                    self._schedule_entries = json.load(f)
+                    print(f"[WiFiScheduler] Loaded {len(self._schedule_entries)} schedule entries")
+        except Exception as e:
+            print(f"[WiFiScheduler] Error loading schedule: {e}")
+            self._schedule_entries = []
+
+    def _save_schedule(self):
+        """Save schedule to file"""
+        try:
+            with open(self._schedule_file, 'w') as f:
+                json.dump(self._schedule_entries, f, indent=2)
+            print(f"[WiFiScheduler] Saved {len(self._schedule_entries)} schedule entries")
+        except Exception as e:
+            print(f"[WiFiScheduler] Error saving schedule: {e}")
+
+    def add_entry(self, days, start_time, end_time, description=""):
+        """
+        Add a schedule entry
+        days: list of integers (0=Monday, 6=Sunday) e.g., [0, 1, 2, 3, 4] for weekdays
+        start_time: "HH:MM" format (24-hour)
+        end_time: "HH:MM" format (24-hour)
+        """
+        with self._lock:
+            entry = {
+                'id': str(int(time.time() * 1000)),  # Unique ID based on timestamp
+                'days': days,
+                'start_time': start_time,
+                'end_time': end_time,
+                'description': description,
+                'enabled': True
+            }
+            self._schedule_entries.append(entry)
+            self._save_schedule()
+            print(f"[WiFiScheduler] Added entry: {entry}")
+            return entry
+
+    def remove_entry(self, entry_id):
+        """Remove a schedule entry by ID"""
+        with self._lock:
+            original_len = len(self._schedule_entries)
+            self._schedule_entries = [e for e in self._schedule_entries if e['id'] != entry_id]
+            if len(self._schedule_entries) < original_len:
+                self._save_schedule()
+                print(f"[WiFiScheduler] Removed entry: {entry_id}")
+                return True
+            return False
+
+    def update_entry(self, entry_id, days=None, start_time=None, end_time=None, description=None, enabled=None):
+        """Update a schedule entry"""
+        with self._lock:
+            for entry in self._schedule_entries:
+                if entry['id'] == entry_id:
+                    if days is not None:
+                        entry['days'] = days
+                    if start_time is not None:
+                        entry['start_time'] = start_time
+                    if end_time is not None:
+                        entry['end_time'] = end_time
+                    if description is not None:
+                        entry['description'] = description
+                    if enabled is not None:
+                        entry['enabled'] = enabled
+                    self._save_schedule()
+                    print(f"[WiFiScheduler] Updated entry: {entry}")
+                    return True
+            return False
+
+    def get_entries(self):
+        """Get all schedule entries"""
+        with self._lock:
+            return self._schedule_entries.copy()
+
+    def is_within_schedule(self):
+        """Check if current time is within any enabled schedule entry"""
+        with self._lock:
+            now = datetime.now()
+            current_day = now.weekday()  # 0=Monday, 6=Sunday
+            current_time = now.strftime("%H:%M")
+
+            for entry in self._schedule_entries:
+                if not entry.get('enabled', True):
+                    continue
+
+                if current_day not in entry['days']:
+                    continue
+
+                start_time = entry['start_time']
+                end_time = entry['end_time']
+
+                # Handle time comparison
+                if start_time <= end_time:
+                    # Normal case: start before end (e.g., 09:00 - 17:00)
+                    if start_time <= current_time <= end_time:
+                        return True, entry
+                else:
+                    # Overnight case: end after midnight (e.g., 22:00 - 02:00)
+                    if current_time >= start_time or current_time <= end_time:
+                        return True, entry
+
+            return False, None
+
+
 class LEDController:
     """Manages LED brightness using PWM"""
 
@@ -297,9 +415,9 @@ class LEDController:
             self._pwm_scheduled = GPIO.PWM(LED_SCHEDULED, 1000)
 
             # Start PWM with saved brightness
-            self._pwm_status.start(self._brightness['status'])
-            self._pwm_always_on.start(0)  # Start off
-            self._pwm_scheduled.start(self._brightness['scheduled'])  # Start on (default OFF state)
+            self._pwm_status.start(self._brightness['status'])  # Always on
+            self._pwm_always_on.start(0)  # Start off (controlled by WiFi state)
+            self._pwm_scheduled.start(0)  # Start off (controlled by schedule checker)
 
             print(f"[LEDController] PWM initialized with brightness: {self._brightness}")
         except Exception as e:
@@ -414,17 +532,25 @@ class WiFiStateManager:
             source_text = "physical button" if source == "gpio" else "dashboard"
 
             # Control LEDs based on WiFi state
-            global led_controller
+            # When ALWAYS ON: both LED_ALWAYS_ON and LED_SCHEDULED are ON
+            # When OFF: LED_SCHEDULED is controlled by schedule checker
+            global led_controller, wifi_scheduler
             if led_controller:
                 try:
-                    if new_state:  # WiFi is ON
+                    if new_state:  # WiFi is ON (ALWAYS ON mode)
                         led_controller.set_led_state('always_on', True)
-                        led_controller.set_led_state('scheduled', False)
-                        print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=ON, SCHEDULED=OFF")
+                        led_controller.set_led_state('scheduled', True)
+                        print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=ON, SCHEDULED=ON (always on mode)")
                     else:  # WiFi is OFF
                         led_controller.set_led_state('always_on', False)
-                        led_controller.set_led_state('scheduled', True)
-                        print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=OFF, SCHEDULED=ON")
+                        # Check current schedule and set LED_SCHEDULED appropriately
+                        if wifi_scheduler:
+                            within_schedule, _ = wifi_scheduler.is_within_schedule()
+                            led_controller.set_led_state('scheduled', within_schedule)
+                            print(f"[WiFiStateManager] LED updated: ALWAYS_ON=OFF, SCHEDULED={'ON' if within_schedule else 'OFF'} (schedule: {within_schedule})")
+                        else:
+                            led_controller.set_led_state('scheduled', False)
+                            print(f"[WiFiStateManager] LED updated: ALWAYS_ON=OFF, SCHEDULED=OFF")
                 except Exception as e:
                     print(f"[WiFiStateManager] Error updating LEDs: {e}")
 
@@ -882,6 +1008,12 @@ def handle_connect():
             'brightness': led_controller.get_brightness()
         })
 
+    # Send schedule entries
+    if wifi_scheduler:
+        emit('schedule_updated', {
+            'entries': wifi_scheduler.get_entries()
+        })
+
     # Send activity log history
     if activity_log:
         emit('activity_log_history', {
@@ -1085,6 +1217,127 @@ def handle_get_led_brightness():
         print(f"[SocketIO] Sent LED brightness settings: {brightness}")
 
 
+@socketio.on('add_schedule_entry')
+def handle_add_schedule_entry(data):
+    """Add a new schedule entry"""
+    global wifi_scheduler
+
+    try:
+        days = data.get('days', [])
+        start_time = data.get('start_time', '')
+        end_time = data.get('end_time', '')
+        description = data.get('description', '')
+
+        if not days or not start_time or not end_time:
+            emit('ssh_error', {
+                'error': 'Missing required fields for schedule entry',
+                'timestamp': datetime.now().isoformat()
+            })
+            return
+
+        if wifi_scheduler:
+            entry = wifi_scheduler.add_entry(days, start_time, end_time, description)
+
+            # Broadcast updated schedule to all clients
+            socketio.emit('schedule_updated', {
+                'entries': wifi_scheduler.get_entries()
+            }, namespace='/')
+
+            print(f"[SocketIO] Added schedule entry: {entry}")
+    except Exception as e:
+        emit('ssh_error', {
+            'error': f'Failed to add schedule entry: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        })
+
+
+@socketio.on('remove_schedule_entry')
+def handle_remove_schedule_entry(data):
+    """Remove a schedule entry"""
+    global wifi_scheduler
+
+    try:
+        entry_id = data.get('id')
+        if not entry_id:
+            emit('ssh_error', {
+                'error': 'Missing entry ID',
+                'timestamp': datetime.now().isoformat()
+            })
+            return
+
+        if wifi_scheduler:
+            if wifi_scheduler.remove_entry(entry_id):
+                # Broadcast updated schedule to all clients
+                socketio.emit('schedule_updated', {
+                    'entries': wifi_scheduler.get_entries()
+                }, namespace='/')
+                print(f"[SocketIO] Removed schedule entry: {entry_id}")
+            else:
+                emit('ssh_error', {
+                    'error': 'Schedule entry not found',
+                    'timestamp': datetime.now().isoformat()
+                })
+    except Exception as e:
+        emit('ssh_error', {
+            'error': f'Failed to remove schedule entry: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        })
+
+
+@socketio.on('update_schedule_entry')
+def handle_update_schedule_entry(data):
+    """Update a schedule entry"""
+    global wifi_scheduler
+
+    try:
+        entry_id = data.get('id')
+        if not entry_id:
+            emit('ssh_error', {
+                'error': 'Missing entry ID',
+                'timestamp': datetime.now().isoformat()
+            })
+            return
+
+        if wifi_scheduler:
+            success = wifi_scheduler.update_entry(
+                entry_id,
+                days=data.get('days'),
+                start_time=data.get('start_time'),
+                end_time=data.get('end_time'),
+                description=data.get('description'),
+                enabled=data.get('enabled')
+            )
+
+            if success:
+                # Broadcast updated schedule to all clients
+                socketio.emit('schedule_updated', {
+                    'entries': wifi_scheduler.get_entries()
+                }, namespace='/')
+                print(f"[SocketIO] Updated schedule entry: {entry_id}")
+            else:
+                emit('ssh_error', {
+                    'error': 'Schedule entry not found',
+                    'timestamp': datetime.now().isoformat()
+                })
+    except Exception as e:
+        emit('ssh_error', {
+            'error': f'Failed to update schedule entry: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        })
+
+
+@socketio.on('get_schedule')
+def handle_get_schedule():
+    """Send schedule to client"""
+    global wifi_scheduler
+
+    if wifi_scheduler:
+        emit('schedule_updated', {
+            'entries': wifi_scheduler.get_entries()
+        })
+        print(f"[SocketIO] Sent schedule with {len(wifi_scheduler.get_entries())} entries")
+
+
 # ============================================================================
 # GPIO Monitoring
 # ============================================================================
@@ -1186,6 +1439,51 @@ def gpio_loop():
 # Main Application
 # ============================================================================
 
+def schedule_checker_loop():
+    """Background thread that checks schedule and controls LED_SCHEDULED indicator only when WiFi is OFF"""
+    global wifi_scheduler, led_controller, state_manager
+
+    print("[ScheduleChecker] Started (LED indicator only - no SSH control)")
+    last_within_schedule = None
+
+    try:
+        while True:
+            time.sleep(30)  # Check every 30 seconds
+
+            if not wifi_scheduler or not led_controller or not state_manager:
+                continue
+
+            # Only control LED_SCHEDULED if WiFi is OFF
+            # When WiFi is ON (ALWAYS ON mode), LED_SCHEDULED is controlled by WiFiStateManager
+            wifi_is_on = state_manager.get_state()
+
+            if wifi_is_on:
+                # WiFi is ON (ALWAYS ON mode) - skip schedule control, LED already ON
+                continue
+
+            within_schedule, active_entry = wifi_scheduler.is_within_schedule()
+
+            # Only take action if schedule status changed
+            if within_schedule != last_within_schedule:
+                if within_schedule:
+                    # Schedule active - turn LED_SCHEDULED ON (WiFi is OFF, so we control it)
+                    print(f"[ScheduleChecker] Schedule active: {active_entry}")
+                    led_controller.set_led_state('scheduled', True)
+                    print(f"[ScheduleChecker] LED_SCHEDULED turned ON (schedule indicator)")
+                else:
+                    # Schedule inactive - turn LED_SCHEDULED OFF (WiFi is OFF, so we control it)
+                    print(f"[ScheduleChecker] Schedule inactive")
+                    led_controller.set_led_state('scheduled', False)
+                    print(f"[ScheduleChecker] LED_SCHEDULED turned OFF (schedule ended)")
+
+                last_within_schedule = within_schedule
+
+    except Exception as e:
+        print(f"[ScheduleChecker] Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def auto_off_callback():
     """Callback function for auto-off timer expiration"""
     print("[Main] Auto-off timer expired, turning WiFi OFF")
@@ -1214,7 +1512,7 @@ def signal_handler(sig, frame):
 
 def main():
     """Main application entry point"""
-    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue, auth_token_manager, led_controller
+    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue, auth_token_manager, led_controller, wifi_scheduler
 
     print("=" * 60)
     print("WiFi Controller Dashboard")
@@ -1234,6 +1532,11 @@ def main():
     led_controller = LEDController(settings_file='led_settings.json')
     led_controller.socketio = socketio
     print("[Main] LED controller initialized")
+
+    # Initialize WiFi scheduler
+    wifi_scheduler = WiFiScheduler(schedule_file='wifi_schedule.json')
+    wifi_scheduler.socketio = socketio
+    print("[Main] WiFi scheduler initialized")
 
     state_manager = WiFiStateManager()
     state_manager.socketio = socketio
@@ -1267,6 +1570,11 @@ def main():
     gpio_thread = threading.Thread(target=gpio_loop)
     gpio_thread.daemon = True
     gpio_thread.start()
+
+    # Start schedule checker in a separate thread
+    schedule_thread = threading.Thread(target=schedule_checker_loop)
+    schedule_thread.daemon = True
+    schedule_thread.start()
 
     print(f"[Main] Dashboard starting on {CONFIG['flask']['host']}:{CONFIG['flask']['port']}")
     print(f"[Main] Login credentials: {CONFIG['dashboard']['username']} / {CONFIG['dashboard']['password']}")
