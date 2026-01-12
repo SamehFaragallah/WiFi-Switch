@@ -1040,7 +1040,7 @@ def getStatusAPI():
     }), 200
 
 @app.route('/getpowerstatus')
-def getStatusAPI():
+def getPowerStatusAPI():
     return jsonify({'status': 'ON'}), 200
 
 # ============================================================================
