@@ -1476,7 +1476,7 @@ def schedule_checker_loop():
 
     try:
         while True:
-            time.sleep(30)  # Check every 30 seconds
+            time.sleep(5)  # Check every 30 seconds
 
             if not wifi_scheduler or not led_controller or not state_manager:
                 continue
