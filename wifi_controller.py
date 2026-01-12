@@ -21,6 +21,10 @@ from config import CONFIG
 BUTTON_PIN_ON = 23
 BUTTON_PIN_OFF = 24
 
+LED_STATUS = 27
+LED_ALWAYS_ON = 17
+LED_SCHEDULED = 22
+
 # Global instances (will be initialized in main)
 state_manager = None
 cooldown_manager = None
@@ -273,6 +277,19 @@ class WiFiStateManager:
         if state_changed:
             state_text = "ON" if new_state else "OFF"
             source_text = "physical button" if source == "gpio" else "dashboard"
+
+            # Control LEDs based on WiFi state
+            try:
+                if new_state:  # WiFi is ON
+                    GPIO.output(LED_ALWAYS_ON, GPIO.HIGH)
+                    GPIO.output(LED_SCHEDULED, GPIO.LOW)
+                    print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=ON, SCHEDULED=OFF")
+                else:  # WiFi is OFF
+                    GPIO.output(LED_ALWAYS_ON, GPIO.LOW)
+                    GPIO.output(LED_SCHEDULED, GPIO.HIGH)
+                    print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=OFF, SCHEDULED=ON")
+            except Exception as e:
+                print(f"[WiFiStateManager] Error updating LEDs: {e}")
 
             # Add to activity log (only for real actions, not initial/query)
             if source not in ['initial', 'query'] and self.activity_log:
@@ -876,6 +893,20 @@ def gpio_loop():
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUTTON_PIN_ON, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     GPIO.setup(BUTTON_PIN_OFF, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+    # Setup LED pins as outputs
+    GPIO.setup(LED_STATUS, GPIO.OUT)
+    GPIO.setup(LED_ALWAYS_ON, GPIO.OUT)
+    GPIO.setup(LED_SCHEDULED, GPIO.OUT)
+
+    # LED_STATUS always on
+    GPIO.output(LED_STATUS, GPIO.HIGH)
+    print("[GPIO] LED_STATUS turned ON")
+
+    # Initialize other LEDs based on current WiFi state (OFF at startup)
+    GPIO.output(LED_ALWAYS_ON, GPIO.LOW)
+    GPIO.output(LED_SCHEDULED, GPIO.HIGH)  # Scheduled LED on when WiFi is off
+    print("[GPIO] LED_ALWAYS_ON: OFF, LED_SCHEDULED: ON")
 
     prevState_on = GPIO.input(BUTTON_PIN_ON)
     prevState_off = GPIO.input(BUTTON_PIN_OFF)
