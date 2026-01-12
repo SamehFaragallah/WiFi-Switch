@@ -1039,6 +1039,9 @@ def getStatusAPI():
         'timestamp': datetime.now().isoformat()
     }), 200
 
+@app.route('/getpowerstatus')
+def getStatusAPI():
+    return jsonify({'status': 'ON'}), 200
 
 # ============================================================================
 # SocketIO Event Handlers
