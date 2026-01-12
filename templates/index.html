@@ -38,8 +38,8 @@
                             <path d="M7.9795939,11.00003 C7.9795939,12.00002 8.8837256,13 10,13 C11.1162744,13 12.0204061,12.00002 12.0204061,11.00003 C12.0204061,8.00008 7.9795939,8.00008 7.9795939,11.00003 M5.71370846,6.7571 L7.1431458,8.17208 C8.7180523,6.6121 11.2819477,6.6121 12.8568542,8.17208 L14.2862915,6.7571 C11.9183756,4.41413 8.0816244,4.41413 5.71370846,6.7571 M0,1.10019 L1.42842711,2.51516 C6.1551672,-2.16376 13.8448328,-2.16376 18.5715729,2.51516 L20,1.10019 C14.4772199,-4.36673 5.52278008,-4.36673 0,1.10019 M17.1431458,3.92914 L15.7147187,5.34312 C12.5638953,2.22417 7.4361047,2.22417 4.28528134,5.34312 L2.85685423,3.92914 C6.8016971,0.0242 13.1983029,0.0242 17.1431458,3.92914" fill-rule="evenodd"/>
                         </svg>
                     </div>
-                    <h3 id="wifi-status-text" class="text-3xl font-bold mb-2">OFF</h3>
-                    <p id="wifi-status-subtitle" class="text-gray-600">WiFi is currently disabled</p>
+                    <h3 id="wifi-status-text" class="text-3xl font-bold mb-2">On Schedule</h3>
+                    <p id="wifi-status-subtitle" class="text-gray-600">WiFi is on Schedule</p>
                 </div>
 
                 <!-- Toggle Button -->
@@ -758,22 +758,22 @@
                 // WiFi ON
                 circle.classList.remove('bg-gray-300');
                 circle.classList.add('bg-green-500');
-                text.textContent = 'ON';
+                text.textContent = 'Always ON';
                 text.classList.remove('text-gray-700');
                 text.classList.add('text-green-600');
-                subtitle.textContent = 'WiFi is currently enabled';
+                subtitle.textContent = 'WiFi is Always ON';
                 button.textContent = 'Turn OFF';
                 button.classList.remove('bg-green-600', 'hover:bg-green-700');
                 button.classList.add('bg-red-600', 'hover:bg-red-700');
                 countdownContainer.classList.remove('hidden');
             } else {
-                // WiFi OFF
+                // WiFi OFF (on schedule)
                 circle.classList.remove('bg-green-500');
                 circle.classList.add('bg-gray-300');
-                text.textContent = 'OFF';
+                text.textContent = 'On Schedule';
                 text.classList.remove('text-green-600');
                 text.classList.add('text-gray-700');
-                subtitle.textContent = 'WiFi is currently disabled';
+                subtitle.textContent = 'WiFi is on Schedule';
                 button.textContent = 'Turn ON';
                 button.classList.remove('bg-red-600', 'hover:bg-red-700');
                 button.classList.add('bg-green-600', 'hover:bg-green-700');
