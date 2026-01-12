@@ -384,6 +384,13 @@ class LEDController:
             'scheduled': 100
         }
 
+        # Track current LED states to prevent unnecessary PWM updates
+        self._led_states = {
+            'status': None,
+            'always_on': None,
+            'scheduled': None
+        }
+
         self._load_settings()
 
     def _load_settings(self):
@@ -414,10 +421,15 @@ class LEDController:
             self._pwm_always_on = GPIO.PWM(LED_ALWAYS_ON, 1000)
             self._pwm_scheduled = GPIO.PWM(LED_SCHEDULED, 1000)
 
-            # Start PWM with saved brightness
-            self._pwm_status.start(self._brightness['status'])  # Always on
-            self._pwm_always_on.start(0)  # Start off (controlled by WiFi state)
-            self._pwm_scheduled.start(0)  # Start off (controlled by schedule checker)
+            # Start all LEDs OFF - they will be set correctly by WiFiStateManager and schedule checker
+            self._pwm_status.start(0)
+            self._pwm_always_on.start(0)
+            self._pwm_scheduled.start(0)
+
+            # Track initial states (all OFF)
+            self._led_states['status'] = False
+            self._led_states['always_on'] = False
+            self._led_states['scheduled'] = False
 
             print(f"[LEDController] PWM initialized with brightness: {self._brightness}")
         except Exception as e:
@@ -435,15 +447,19 @@ class LEDController:
             self._brightness[led_name] = brightness
 
             try:
-                # Update PWM duty cycle
-                if led_name == 'status' and self._pwm_status:
-                    self._pwm_status.ChangeDutyCycle(brightness)
-                elif led_name == 'always_on' and self._pwm_always_on:
-                    self._pwm_always_on.ChangeDutyCycle(brightness)
-                elif led_name == 'scheduled' and self._pwm_scheduled:
-                    self._pwm_scheduled.ChangeDutyCycle(brightness)
+                # Only update PWM duty cycle if LED is currently ON
+                # Otherwise just save the brightness setting for next time it turns on
+                is_led_on = self._led_states.get(led_name, False)
 
-                print(f"[LEDController] Set {led_name} brightness to {brightness}%")
+                if is_led_on:
+                    if led_name == 'status' and self._pwm_status:
+                        self._pwm_status.ChangeDutyCycle(brightness)
+                    elif led_name == 'always_on' and self._pwm_always_on:
+                        self._pwm_always_on.ChangeDutyCycle(brightness)
+                    elif led_name == 'scheduled' and self._pwm_scheduled:
+                        self._pwm_scheduled.ChangeDutyCycle(brightness)
+
+                print(f"[LEDController] Set {led_name} brightness to {brightness}% (LED is {'ON' if is_led_on else 'OFF'})")
                 self._save_settings()
 
                 # Broadcast brightness update
@@ -474,12 +490,21 @@ class LEDController:
         """Turn LED on/off (uses saved brightness when on, 0 when off)"""
         with self._lock:
             try:
+                # Check if state is already set to avoid unnecessary PWM updates (prevents flickering)
+                if self._led_states.get(led_name) == enabled:
+                    return  # State unchanged, skip update
+
                 brightness = self._brightness[led_name] if enabled else 0
 
-                if led_name == 'always_on' and self._pwm_always_on:
+                if led_name == 'status' and self._pwm_status:
+                    self._pwm_status.ChangeDutyCycle(brightness)
+                    self._led_states['status'] = enabled
+                elif led_name == 'always_on' and self._pwm_always_on:
                     self._pwm_always_on.ChangeDutyCycle(brightness)
+                    self._led_states['always_on'] = enabled
                 elif led_name == 'scheduled' and self._pwm_scheduled:
                     self._pwm_scheduled.ChangeDutyCycle(brightness)
+                    self._led_states['scheduled'] = enabled
 
                 state_text = f"ON ({self._brightness[led_name]}%)" if enabled else "OFF"
                 print(f"[LEDController] Set {led_name} to {state_text}")
