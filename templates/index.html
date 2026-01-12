@@ -587,6 +587,15 @@
         // Schedule management
         let selectedDays = new Set();
 
+        // Convert 24-hour time (HH:MM) to 12-hour format (h:MM AM/PM)
+        function formatTimeTo12Hour(time24) {
+            const [hours24, minutes] = time24.split(':');
+            const hours = parseInt(hours24);
+            const period = hours >= 12 ? 'PM' : 'AM';
+            const hours12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+            return `${hours12}:${minutes} ${period}`;
+        }
+
         function toggleAddScheduleForm() {
             const form = document.getElementById('add-schedule-form');
             if (form.classList.contains('hidden')) {
@@ -673,7 +682,7 @@
                         <div class="flex justify-between items-start">
                             <div class="flex-1">
                                 <div class="text-sm font-semibold text-gray-700">${daysText}</div>
-                                <div class="text-sm text-gray-600">${entry.start_time} - ${entry.end_time}</div>
+                                <div class="text-sm text-gray-600">${formatTimeTo12Hour(entry.start_time)} - ${formatTimeTo12Hour(entry.end_time)}</div>
                                 ${description}
                             </div>
                             <button

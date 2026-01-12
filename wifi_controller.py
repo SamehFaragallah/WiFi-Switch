@@ -532,25 +532,28 @@ class WiFiStateManager:
             source_text = "physical button" if source == "gpio" else "dashboard"
 
             # Control LEDs based on WiFi state
-            # When ALWAYS ON: both LED_ALWAYS_ON and LED_SCHEDULED are ON
-            # When OFF: LED_SCHEDULED is controlled by schedule checker
+            # LED_STATUS: ON during scheduled time OR when WiFi is ALWAYS ON
+            # LED_ALWAYS_ON: ON only when WiFi is ON (ALWAYS ON mode)
+            # LED_SCHEDULED: ON only when WiFi state is OFF (regardless of schedule)
             global led_controller, wifi_scheduler
             if led_controller:
                 try:
                     if new_state:  # WiFi is ON (ALWAYS ON mode)
+                        led_controller.set_led_state('status', True)
                         led_controller.set_led_state('always_on', True)
-                        led_controller.set_led_state('scheduled', True)
-                        print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=ON, SCHEDULED=ON (always on mode)")
+                        led_controller.set_led_state('scheduled', False)
+                        print(f"[WiFiStateManager] LEDs: STATUS=ON, ALWAYS_ON=ON, SCHEDULED=OFF (always on mode)")
                     else:  # WiFi is OFF
                         led_controller.set_led_state('always_on', False)
-                        # Check current schedule and set LED_SCHEDULED appropriately
+                        led_controller.set_led_state('scheduled', True)  # Always ON when WiFi is OFF
+                        # Check current schedule and set LED_STATUS appropriately
                         if wifi_scheduler:
                             within_schedule, _ = wifi_scheduler.is_within_schedule()
-                            led_controller.set_led_state('scheduled', within_schedule)
-                            print(f"[WiFiStateManager] LED updated: ALWAYS_ON=OFF, SCHEDULED={'ON' if within_schedule else 'OFF'} (schedule: {within_schedule})")
+                            led_controller.set_led_state('status', within_schedule)
+                            print(f"[WiFiStateManager] LEDs: STATUS={'ON' if within_schedule else 'OFF'}, ALWAYS_ON=OFF, SCHEDULED=ON (wifi off)")
                         else:
-                            led_controller.set_led_state('scheduled', False)
-                            print(f"[WiFiStateManager] LED updated: ALWAYS_ON=OFF, SCHEDULED=OFF")
+                            led_controller.set_led_state('status', False)
+                            print(f"[WiFiStateManager] LEDs: STATUS=OFF, ALWAYS_ON=OFF, SCHEDULED=ON (wifi off)")
                 except Exception as e:
                     print(f"[WiFiStateManager] Error updating LEDs: {e}")
 
@@ -1440,10 +1443,10 @@ def gpio_loop():
 # ============================================================================
 
 def schedule_checker_loop():
-    """Background thread that checks schedule and controls LED_SCHEDULED indicator only when WiFi is OFF"""
+    """Background thread that checks schedule and controls LED_STATUS indicator only when WiFi is OFF"""
     global wifi_scheduler, led_controller, state_manager
 
-    print("[ScheduleChecker] Started (LED indicator only - no SSH control)")
+    print("[ScheduleChecker] Started (LED_STATUS indicator only - no SSH control)")
     last_within_schedule = None
 
     try:
@@ -1453,12 +1456,12 @@ def schedule_checker_loop():
             if not wifi_scheduler or not led_controller or not state_manager:
                 continue
 
-            # Only control LED_SCHEDULED if WiFi is OFF
-            # When WiFi is ON (ALWAYS ON mode), LED_SCHEDULED is controlled by WiFiStateManager
+            # Only control LED_STATUS if WiFi is OFF
+            # When WiFi is ON (ALWAYS ON mode), LED_STATUS is controlled by WiFiStateManager
             wifi_is_on = state_manager.get_state()
 
             if wifi_is_on:
-                # WiFi is ON (ALWAYS ON mode) - skip schedule control, LED already ON
+                # WiFi is ON (ALWAYS ON mode) - skip schedule control, LED_STATUS already ON
                 continue
 
             within_schedule, active_entry = wifi_scheduler.is_within_schedule()
@@ -1466,15 +1469,15 @@ def schedule_checker_loop():
             # Only take action if schedule status changed
             if within_schedule != last_within_schedule:
                 if within_schedule:
-                    # Schedule active - turn LED_SCHEDULED ON (WiFi is OFF, so we control it)
+                    # Schedule active - turn LED_STATUS ON (WiFi is OFF, so we control it)
                     print(f"[ScheduleChecker] Schedule active: {active_entry}")
-                    led_controller.set_led_state('scheduled', True)
-                    print(f"[ScheduleChecker] LED_SCHEDULED turned ON (schedule indicator)")
+                    led_controller.set_led_state('status', True)
+                    print(f"[ScheduleChecker] LED_STATUS turned ON (schedule indicator)")
                 else:
-                    # Schedule inactive - turn LED_SCHEDULED OFF (WiFi is OFF, so we control it)
+                    # Schedule inactive - turn LED_STATUS OFF (WiFi is OFF, so we control it)
                     print(f"[ScheduleChecker] Schedule inactive")
-                    led_controller.set_led_state('scheduled', False)
-                    print(f"[ScheduleChecker] LED_SCHEDULED turned OFF (schedule ended)")
+                    led_controller.set_led_state('status', False)
+                    print(f"[ScheduleChecker] LED_STATUS turned OFF (schedule ended)")
 
                 last_within_schedule = within_schedule
 
