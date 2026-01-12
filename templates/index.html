@@ -127,6 +127,67 @@
                     </p>
                 </div>
 
+                <!-- LED Brightness Settings -->
+                <div class="mb-6">
+                    <label class="block text-gray-700 font-semibold mb-3">
+                        LED Brightness
+                    </label>
+
+                    <!-- Status LED -->
+                    <div class="mb-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-sm text-gray-600">Status LED</span>
+                            <span id="brightness-status-value" class="text-sm font-semibold text-gray-700">100%</span>
+                        </div>
+                        <input
+                            type="range"
+                            id="brightness-status"
+                            min="0"
+                            max="100"
+                            value="100"
+                            class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                            oninput="updateLEDBrightnessDisplay('status', this.value)"
+                            onchange="updateLEDBrightness('status', this.value)"
+                        >
+                    </div>
+
+                    <!-- Always On LED -->
+                    <div class="mb-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-sm text-gray-600">Always On LED</span>
+                            <span id="brightness-always_on-value" class="text-sm font-semibold text-gray-700">100%</span>
+                        </div>
+                        <input
+                            type="range"
+                            id="brightness-always_on"
+                            min="0"
+                            max="100"
+                            value="100"
+                            class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600"
+                            oninput="updateLEDBrightnessDisplay('always_on', this.value)"
+                            onchange="updateLEDBrightness('always_on', this.value)"
+                        >
+                    </div>
+
+                    <!-- Scheduled LED -->
+                    <div class="mb-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-sm text-gray-600">Scheduled LED</span>
+                            <span id="brightness-scheduled-value" class="text-sm font-semibold text-gray-700">100%</span>
+                        </div>
+                        <input
+                            type="range"
+                            id="brightness-scheduled"
+                            min="0"
+                            max="100"
+                            value="100"
+                            class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-yellow-600"
+                            oninput="updateLEDBrightnessDisplay('scheduled', this.value)"
+                            onchange="updateLEDBrightness('scheduled', this.value)"
+                        >
+                    </div>
+                </div>
+
                 <!-- SSH Status -->
                 <div class="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                     <div class="flex items-center gap-2">
@@ -399,6 +460,53 @@
             console.log('Updating device name to:', deviceName);
             socket.emit('update_device_name', { device_name: deviceName });
         }
+
+        // Update LED brightness display (instant feedback)
+        function updateLEDBrightnessDisplay(ledName, brightness) {
+            const valueSpan = document.getElementById(`brightness-${ledName}-value`);
+            if (valueSpan) {
+                valueSpan.textContent = `${brightness}%`;
+            }
+        }
+
+        // Update LED brightness (send to server)
+        function updateLEDBrightness(ledName, brightness) {
+            console.log(`Updating LED brightness: ${ledName} = ${brightness}%`);
+            socket.emit('update_led_brightness', {
+                led: ledName,
+                brightness: parseInt(brightness)
+            });
+        }
+
+        // LED brightness settings received
+        socket.on('led_brightness_settings', (data) => {
+            console.log('LED brightness settings:', data);
+            if (data.brightness) {
+                // Update sliders and display values
+                Object.keys(data.brightness).forEach(ledName => {
+                    const slider = document.getElementById(`brightness-${ledName}`);
+                    const valueSpan = document.getElementById(`brightness-${ledName}-value`);
+                    if (slider && valueSpan) {
+                        slider.value = data.brightness[ledName];
+                        valueSpan.textContent = `${data.brightness[ledName]}%`;
+                    }
+                });
+            }
+        });
+
+        // LED brightness updated (broadcast to all clients)
+        socket.on('led_brightness_updated', (data) => {
+            console.log('LED brightness updated:', data);
+            if (data.led && data.brightness !== undefined) {
+                const slider = document.getElementById(`brightness-${data.led}`);
+                const valueSpan = document.getElementById(`brightness-${data.led}-value`);
+                if (slider && valueSpan) {
+                    slider.value = data.brightness;
+                    valueSpan.textContent = `${data.brightness}%`;
+                }
+                showToast(`${data.led.replace('_', ' ')} LED brightness: ${data.brightness}%`, 'success');
+            }
+        });
 
         // Update WiFi display
         function updateWiFiDisplay(state) {

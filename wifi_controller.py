@@ -32,6 +32,7 @@ auto_off_timer = None
 ssh_controller = None
 socketio_instance = None
 activity_log = None
+led_controller = None
 # Thread-safe queue for cross-thread SocketIO emits
 emit_queue = None
 
@@ -247,6 +248,140 @@ def emit_queue_processor(socketio_instance):
 # Thread-Safe State Management Classes
 # ============================================================================
 
+class LEDController:
+    """Manages LED brightness using PWM"""
+
+    def __init__(self, settings_file='led_settings.json'):
+        self._settings_file = settings_file
+        self._lock = threading.RLock()
+        self._pwm_status = None
+        self._pwm_always_on = None
+        self._pwm_scheduled = None
+        self.socketio = None
+
+        # Default brightness values (0-100%)
+        self._brightness = {
+            'status': 100,
+            'always_on': 100,
+            'scheduled': 100
+        }
+
+        self._load_settings()
+
+    def _load_settings(self):
+        """Load LED brightness settings from file"""
+        try:
+            if os.path.exists(self._settings_file):
+                with open(self._settings_file, 'r') as f:
+                    saved_settings = json.load(f)
+                    self._brightness.update(saved_settings)
+                    print(f"[LEDController] Loaded settings: {self._brightness}")
+        except Exception as e:
+            print(f"[LEDController] Error loading settings: {e}")
+
+    def _save_settings(self):
+        """Save LED brightness settings to file"""
+        try:
+            with open(self._settings_file, 'w') as f:
+                json.dump(self._brightness, f, indent=2)
+            print(f"[LEDController] Saved settings: {self._brightness}")
+        except Exception as e:
+            print(f"[LEDController] Error saving settings: {e}")
+
+    def initialize_pwm(self):
+        """Initialize PWM for all LEDs"""
+        try:
+            # Initialize PWM at 1000 Hz frequency
+            self._pwm_status = GPIO.PWM(LED_STATUS, 1000)
+            self._pwm_always_on = GPIO.PWM(LED_ALWAYS_ON, 1000)
+            self._pwm_scheduled = GPIO.PWM(LED_SCHEDULED, 1000)
+
+            # Start PWM with saved brightness
+            self._pwm_status.start(self._brightness['status'])
+            self._pwm_always_on.start(0)  # Start off
+            self._pwm_scheduled.start(self._brightness['scheduled'])  # Start on (default OFF state)
+
+            print(f"[LEDController] PWM initialized with brightness: {self._brightness}")
+        except Exception as e:
+            print(f"[LEDController] Error initializing PWM: {e}")
+
+    def set_brightness(self, led_name, brightness):
+        """Set brightness for a specific LED (0-100%)"""
+        with self._lock:
+            if led_name not in self._brightness:
+                print(f"[LEDController] Invalid LED name: {led_name}")
+                return False
+
+            # Clamp brightness to 0-100
+            brightness = max(0, min(100, brightness))
+            self._brightness[led_name] = brightness
+
+            try:
+                # Update PWM duty cycle
+                if led_name == 'status' and self._pwm_status:
+                    self._pwm_status.ChangeDutyCycle(brightness)
+                elif led_name == 'always_on' and self._pwm_always_on:
+                    self._pwm_always_on.ChangeDutyCycle(brightness)
+                elif led_name == 'scheduled' and self._pwm_scheduled:
+                    self._pwm_scheduled.ChangeDutyCycle(brightness)
+
+                print(f"[LEDController] Set {led_name} brightness to {brightness}%")
+                self._save_settings()
+
+                # Broadcast brightness update
+                if self.socketio:
+                    safe_emit_from_thread(
+                        self.socketio,
+                        'led_brightness_updated',
+                        {
+                            'led': led_name,
+                            'brightness': brightness,
+                            'all_brightness': self._brightness.copy()
+                        }
+                    )
+
+                return True
+            except Exception as e:
+                print(f"[LEDController] Error setting brightness: {e}")
+                return False
+
+    def get_brightness(self, led_name=None):
+        """Get brightness for a specific LED or all LEDs"""
+        with self._lock:
+            if led_name:
+                return self._brightness.get(led_name, 0)
+            return self._brightness.copy()
+
+    def set_led_state(self, led_name, enabled):
+        """Turn LED on/off (uses saved brightness when on, 0 when off)"""
+        with self._lock:
+            try:
+                brightness = self._brightness[led_name] if enabled else 0
+
+                if led_name == 'always_on' and self._pwm_always_on:
+                    self._pwm_always_on.ChangeDutyCycle(brightness)
+                elif led_name == 'scheduled' and self._pwm_scheduled:
+                    self._pwm_scheduled.ChangeDutyCycle(brightness)
+
+                state_text = f"ON ({self._brightness[led_name]}%)" if enabled else "OFF"
+                print(f"[LEDController] Set {led_name} to {state_text}")
+            except Exception as e:
+                print(f"[LEDController] Error setting LED state: {e}")
+
+    def cleanup(self):
+        """Stop all PWM and cleanup"""
+        try:
+            if self._pwm_status:
+                self._pwm_status.stop()
+            if self._pwm_always_on:
+                self._pwm_always_on.stop()
+            if self._pwm_scheduled:
+                self._pwm_scheduled.stop()
+            print("[LEDController] PWM stopped")
+        except Exception as e:
+            print(f"[LEDController] Error during cleanup: {e}")
+
+
 class WiFiStateManager:
     """Manages WiFi ON/OFF state with thread-safe operations"""
 
@@ -279,17 +414,19 @@ class WiFiStateManager:
             source_text = "physical button" if source == "gpio" else "dashboard"
 
             # Control LEDs based on WiFi state
-            try:
-                if new_state:  # WiFi is ON
-                    GPIO.output(LED_ALWAYS_ON, GPIO.HIGH)
-                    GPIO.output(LED_SCHEDULED, GPIO.LOW)
-                    print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=ON, SCHEDULED=OFF")
-                else:  # WiFi is OFF
-                    GPIO.output(LED_ALWAYS_ON, GPIO.LOW)
-                    GPIO.output(LED_SCHEDULED, GPIO.HIGH)
-                    print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=OFF, SCHEDULED=ON")
-            except Exception as e:
-                print(f"[WiFiStateManager] Error updating LEDs: {e}")
+            global led_controller
+            if led_controller:
+                try:
+                    if new_state:  # WiFi is ON
+                        led_controller.set_led_state('always_on', True)
+                        led_controller.set_led_state('scheduled', False)
+                        print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=ON, SCHEDULED=OFF")
+                    else:  # WiFi is OFF
+                        led_controller.set_led_state('always_on', False)
+                        led_controller.set_led_state('scheduled', True)
+                        print(f"[WiFiStateManager] LEDs updated: ALWAYS_ON=OFF, SCHEDULED=ON")
+                except Exception as e:
+                    print(f"[WiFiStateManager] Error updating LEDs: {e}")
 
             # Add to activity log (only for real actions, not initial/query)
             if source not in ['initial', 'query'] and self.activity_log:
@@ -739,6 +876,12 @@ def handle_connect():
         'device_name': CONFIG.get('device', {}).get('name', '')
     })
 
+    # Send LED brightness settings
+    if led_controller:
+        emit('led_brightness_settings', {
+            'brightness': led_controller.get_brightness()
+        })
+
     # Send activity log history
     if activity_log:
         emit('activity_log_history', {
@@ -858,7 +1001,7 @@ def handle_update_device_name(data):
     # Ensure device config exists
     if 'device' not in CONFIG:
         CONFIG['device'] = {}
-    
+
     # Update config
     CONFIG['device']['name'] = device_name
 
@@ -881,32 +1024,89 @@ def handle_update_device_name(data):
         })
 
 
+@socketio.on('update_led_brightness')
+def handle_update_led_brightness(data):
+    """Update LED brightness setting"""
+    global led_controller
+
+    led_name = data.get('led')
+    brightness = data.get('brightness')
+
+    print(f"[SocketIO] Update LED brightness: {led_name} = {brightness}%")
+
+    if not led_controller:
+        emit('ssh_error', {
+            'error': 'LED controller not initialized',
+            'timestamp': datetime.now().isoformat()
+        })
+        return
+
+    if led_name not in ['status', 'always_on', 'scheduled']:
+        emit('ssh_error', {
+            'error': f'Invalid LED name: {led_name}',
+            'timestamp': datetime.now().isoformat()
+        })
+        return
+
+    try:
+        brightness = int(brightness)
+        if brightness < 0 or brightness > 100:
+            emit('ssh_error', {
+                'error': 'Brightness must be between 0 and 100',
+                'timestamp': datetime.now().isoformat()
+            })
+            return
+
+        # Update LED brightness
+        if led_controller.set_brightness(led_name, brightness):
+            print(f"[SocketIO] LED brightness updated successfully: {led_name} = {brightness}%")
+        else:
+            emit('ssh_error', {
+                'error': f'Failed to set LED brightness',
+                'timestamp': datetime.now().isoformat()
+            })
+    except Exception as e:
+        emit('ssh_error', {
+            'error': f'Failed to update LED brightness: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        })
+
+
+@socketio.on('get_led_brightness')
+def handle_get_led_brightness():
+    """Send current LED brightness settings to client"""
+    global led_controller
+
+    if led_controller:
+        brightness = led_controller.get_brightness()
+        emit('led_brightness_settings', {
+            'brightness': brightness
+        })
+        print(f"[SocketIO] Sent LED brightness settings: {brightness}")
+
+
 # ============================================================================
 # GPIO Monitoring
 # ============================================================================
 
 def gpio_loop():
     """GPIO monitoring loop (runs in separate thread)"""
-    global state_manager, cooldown_manager, auto_off_timer, ssh_controller
+    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, led_controller
 
     # Initialize GPIO
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUTTON_PIN_ON, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     GPIO.setup(BUTTON_PIN_OFF, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-    # Setup LED pins as outputs
+    # Setup LED pins as outputs (PWM compatible)
     GPIO.setup(LED_STATUS, GPIO.OUT)
     GPIO.setup(LED_ALWAYS_ON, GPIO.OUT)
     GPIO.setup(LED_SCHEDULED, GPIO.OUT)
 
-    # LED_STATUS always on
-    GPIO.output(LED_STATUS, GPIO.HIGH)
-    print("[GPIO] LED_STATUS turned ON")
-
-    # Initialize other LEDs based on current WiFi state (OFF at startup)
-    GPIO.output(LED_ALWAYS_ON, GPIO.LOW)
-    GPIO.output(LED_SCHEDULED, GPIO.HIGH)  # Scheduled LED on when WiFi is off
-    print("[GPIO] LED_ALWAYS_ON: OFF, LED_SCHEDULED: ON")
+    # Initialize LED PWM controller
+    if led_controller:
+        led_controller.initialize_pwm()
+        print("[GPIO] LED PWM initialized")
 
     prevState_on = GPIO.input(BUTTON_PIN_ON)
     prevState_off = GPIO.input(BUTTON_PIN_OFF)
@@ -997,19 +1197,24 @@ def auto_off_callback():
 
 def signal_handler(sig, frame):
     """Handle shutdown signals"""
+    global led_controller
     print("\n[Main] Shutting down gracefully...")
     auto_off_timer.cancel()
     # Save activity log before exiting
     if activity_log:
         print("[Main] Saving activity log...")
         activity_log._save_to_file()
+    # Cleanup LED PWM
+    if led_controller:
+        print("[Main] Stopping LED PWM...")
+        led_controller.cleanup()
     GPIO.cleanup()
     sys.exit(0)
 
 
 def main():
     """Main application entry point"""
-    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue, auth_token_manager
+    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue, auth_token_manager, led_controller
 
     print("=" * 60)
     print("WiFi Controller Dashboard")
@@ -1024,6 +1229,11 @@ def main():
 
     # Initialize components
     activity_log = ActivityLog(max_entries=25, socketio=socketio)
+
+    # Initialize LED controller
+    led_controller = LEDController(settings_file='led_settings.json')
+    led_controller.socketio = socketio
+    print("[Main] LED controller initialized")
 
     state_manager = WiFiStateManager()
     state_manager.socketio = socketio
