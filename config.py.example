@@ -1,33 +1,48 @@
 CONFIG = {
+    'ssh': {
+        'enabled': True,  # Set to False to disable SSH for testing
+        'host': '10.1.30.10',
+        'port': 22,
+        'username': 'WifiSwitch',
+        'password': 'ssh-password',
+        'wifi_on_command': '''
+            config wireless-controller vap
+            edit LCBCGuests
+            set schedule "always"
+            end''',
+        'wifi_off_command': '''
+            config wireless-controller vap
+            edit LCBCGuests
+            set schedule "LCBCGuestSat" "LCBCGuestSun" "LCBCGuestWeekday"
+            end
+        ''',
+        'wifi_status_command': '''
+            config wireless-controller vap
+            edit LCBCGuests
+            show
+            end
+        '''
+    },
+    'dashboard': {
+        'username': 'username',
+        'password': 'password',
+        'secret_key': 'rock-secret-key'
+    },
+    'slack':{
+        'bot_token': 'xoxb-rest-of-token',
+        'enabled': False,
+        'channel_id': 'GRZFEPVDE'
+    },
     'flask': {
         'host': '0.0.0.0',
         'port': 5000,
         'debug': False
-    },
-    'dashboard': {
-        'username': 'admin',
-        'password': 'admin',
-        'secret_key': 'change-this-to-a-random-secret-key-in-production'
-    },
-    'ssh': {
-        'enabled': False,
-        'host': '192.168.1.1',
-        'port': 22,
-        'username': 'root',
-        'password': 'password',
-        'wifi_on_command': '# Replace with your command to turn WiFi ON',
-        'wifi_off_command': '# Replace with your command to turn WiFi OFF'
     },
     'auto_off': {
         'enabled': True,
         'duration_minutes': 180
     },
     'device': {
-        'name': ''
-    },
-    'slack': {
-        'enabled': False,
-        'bot_token': 'xoxb-your-bot-token-here',
-        'channel_id': 'GRZFEPVDE'
+        'name': 'Unnamed WiFi Switch',
     }
 }
