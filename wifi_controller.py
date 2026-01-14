@@ -927,6 +927,28 @@ class ActivityLog:
             return list(self._entries)
 
 
+def log_error(error_message, emit_to_client=True):
+    """
+    Helper function to log errors to activity log (which sends to Slack) and optionally emit to client
+
+    Args:
+        error_message: The error message to log
+        emit_to_client: Whether to emit ssh_error event to the client (default True)
+    """
+    global activity_log
+
+    # Log to activity log (which will send to Slack if enabled)
+    if activity_log:
+        activity_log.add_entry(f"ERROR: {error_message}", source="system")
+
+    # Also emit to client if requested
+    if emit_to_client:
+        emit('ssh_error', {
+            'error': error_message,
+            'timestamp': datetime.now().isoformat()
+        })
+
+
 class SlackNotifier:
     """Manages Slack notifications for activity log entries"""
 
@@ -1265,10 +1287,7 @@ def handle_toggle_wifi(data):
                 success, message = ssh_controller.set_wifi_on()
                 print(f"[SocketIO] set_wifi_on() returned: {success}, {message}")
                 if not success:
-                    emit('ssh_error', {
-                        'error': f'Failed to turn WiFi ON: {message}',
-                        'timestamp': datetime.now().isoformat()
-                    })
+                    log_error(f'Failed to turn WiFi ON: {message}')
 
                 # Start auto-off timer
                 print(f"[SocketIO] Starting auto-off timer")
@@ -1280,10 +1299,7 @@ def handle_toggle_wifi(data):
                 success, message = ssh_controller.set_wifi_off()
                 print(f"[SocketIO] set_wifi_off() returned: {success}, {message}")
                 if not success:
-                    emit('ssh_error', {
-                        'error': f'Failed to turn WiFi OFF: {message}',
-                        'timestamp': datetime.now().isoformat()
-                    })
+                    log_error(f'Failed to turn WiFi OFF: {message}')
 
                 # Cancel auto-off timer
                 print(f"[SocketIO] Cancelling auto-off timer")
@@ -1295,10 +1311,7 @@ def handle_toggle_wifi(data):
         print(f"[SocketIO] Error in toggle_wifi: {str(e)}")
         import traceback
         traceback.print_exc()
-        emit('ssh_error', {
-            'error': f'Error toggling WiFi: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Error toggling WiFi: {str(e)}')
 
 
 @socketio.on('update_auto_off_duration')
@@ -1323,10 +1336,7 @@ def handle_update_auto_off_duration(data):
             'auto_off_duration_minutes': duration_minutes
         }, namespace='/')
     except Exception as e:
-        emit('ssh_error', {
-            'error': f'Failed to save settings: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Failed to save settings: {str(e)}')
 
 
 @socketio.on('update_device_name')
@@ -1355,10 +1365,7 @@ def handle_update_device_name(data):
             'device_name': device_name
         }, namespace='/')
     except Exception as e:
-        emit('ssh_error', {
-            'error': f'Failed to save device name: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Failed to save device name: {str(e)}')
 
 
 @socketio.on('toggle_slack_notifications')
@@ -1370,10 +1377,7 @@ def handle_toggle_slack_notifications(data):
     print(f"[SocketIO] Toggle Slack notifications: {enabled}")
 
     if not slack_notifier:
-        emit('ssh_error', {
-            'error': 'Slack notifier not initialized',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error('Slack notifier not initialized')
         return
 
     try:
@@ -1395,10 +1399,7 @@ def handle_toggle_slack_notifications(data):
             'slack_enabled': enabled
         }, namespace='/')
     except Exception as e:
-        emit('ssh_error', {
-            'error': f'Failed to update Slack settings: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Failed to update Slack settings: {str(e)}')
 
 
 @socketio.on('update_led_brightness')
@@ -1412,41 +1413,26 @@ def handle_update_led_brightness(data):
     print(f"[SocketIO] Update LED brightness: {led_name} = {brightness}%")
 
     if not led_controller:
-        emit('ssh_error', {
-            'error': 'LED controller not initialized',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error('LED controller not initialized')
         return
 
     if led_name not in ['status', 'always_on', 'scheduled']:
-        emit('ssh_error', {
-            'error': f'Invalid LED name: {led_name}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Invalid LED name: {led_name}')
         return
 
     try:
         brightness = int(brightness)
         if brightness < 0 or brightness > 100:
-            emit('ssh_error', {
-                'error': 'Brightness must be between 0 and 100',
-                'timestamp': datetime.now().isoformat()
-            })
+            log_error('Brightness must be between 0 and 100')
             return
 
         # Update LED brightness
         if led_controller.set_brightness(led_name, brightness):
             print(f"[SocketIO] LED brightness updated successfully: {led_name} = {brightness}%")
         else:
-            emit('ssh_error', {
-                'error': f'Failed to set LED brightness',
-                'timestamp': datetime.now().isoformat()
-            })
+            log_error(f'Failed to set LED brightness')
     except Exception as e:
-        emit('ssh_error', {
-            'error': f'Failed to update LED brightness: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Failed to update LED brightness: {str(e)}')
 
 
 @socketio.on('get_led_brightness')
@@ -1474,10 +1460,7 @@ def handle_add_schedule_entry(data):
         description = data.get('description', '')
 
         if not days or not start_time or not end_time:
-            emit('ssh_error', {
-                'error': 'Missing required fields for schedule entry',
-                'timestamp': datetime.now().isoformat()
-            })
+            log_error('Missing required fields for schedule entry')
             return
 
         if wifi_scheduler:
@@ -1490,10 +1473,7 @@ def handle_add_schedule_entry(data):
 
             print(f"[SocketIO] Added schedule entry: {entry}")
     except Exception as e:
-        emit('ssh_error', {
-            'error': f'Failed to add schedule entry: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Failed to add schedule entry: {str(e)}')
 
 
 @socketio.on('remove_schedule_entry')
@@ -1504,10 +1484,7 @@ def handle_remove_schedule_entry(data):
     try:
         entry_id = data.get('id')
         if not entry_id:
-            emit('ssh_error', {
-                'error': 'Missing entry ID',
-                'timestamp': datetime.now().isoformat()
-            })
+            log_error('Missing entry ID')
             return
 
         if wifi_scheduler:
@@ -1518,15 +1495,9 @@ def handle_remove_schedule_entry(data):
                 }, namespace='/')
                 print(f"[SocketIO] Removed schedule entry: {entry_id}")
             else:
-                emit('ssh_error', {
-                    'error': 'Schedule entry not found',
-                    'timestamp': datetime.now().isoformat()
-                })
+                log_error('Schedule entry not found')
     except Exception as e:
-        emit('ssh_error', {
-            'error': f'Failed to remove schedule entry: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Failed to remove schedule entry: {str(e)}')
 
 
 @socketio.on('update_schedule_entry')
@@ -1537,10 +1508,7 @@ def handle_update_schedule_entry(data):
     try:
         entry_id = data.get('id')
         if not entry_id:
-            emit('ssh_error', {
-                'error': 'Missing entry ID',
-                'timestamp': datetime.now().isoformat()
-            })
+            log_error('Missing entry ID')
             return
 
         if wifi_scheduler:
@@ -1560,15 +1528,9 @@ def handle_update_schedule_entry(data):
                 }, namespace='/')
                 print(f"[SocketIO] Updated schedule entry: {entry_id}")
             else:
-                emit('ssh_error', {
-                    'error': 'Schedule entry not found',
-                    'timestamp': datetime.now().isoformat()
-                })
+                log_error('Schedule entry not found')
     except Exception as e:
-        emit('ssh_error', {
-            'error': f'Failed to update schedule entry: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        })
+        log_error(f'Failed to update schedule entry: {str(e)}')
 
 
 @socketio.on('get_schedule')
