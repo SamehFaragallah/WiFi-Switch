@@ -13,6 +13,7 @@ A Raspberry Pi-based WiFi controller with physical buttons and a modern web dash
 - **Authentication**: Secure login with 30-day session duration
 - **Real-time Sync**: All connected dashboards stay synchronized
 - **Activity Log**: Track all WiFi state changes
+- **Slack Notifications**: Send activity log entries to Slack channel (optional, can be enabled/disabled via dashboard)
 
 ## Hardware Requirements
 
@@ -182,6 +183,65 @@ CONFIG = {
     }
 }
 ```
+
+### Slack Notifications
+
+The WiFi Controller can send activity log notifications to a Slack channel.
+
+#### Setup Instructions
+
+1. **Create a Slack App** (if you haven't already):
+   - Go to https://api.slack.com/apps
+   - Click "Create New App" → "From scratch"
+   - Give it a name (e.g., "WiFi Controller") and select your workspace
+
+2. **Configure Bot Token Scopes**:
+   - Navigate to "OAuth & Permissions"
+   - Under "Scopes" → "Bot Token Scopes", add:
+     - `chat:write` - Send messages to channels
+     - `chat:write.public` - Send messages to channels without joining
+
+3. **Install App to Workspace**:
+   - Click "Install to Workspace"
+   - Authorize the app
+   - Copy the "Bot User OAuth Token" (starts with `xoxb-`)
+
+4. **Add Bot to Channel**:
+   - In Slack, invite the bot to your desired channel:
+     ```
+     /invite @WiFi Controller
+     ```
+
+5. **Configure in config.py**:
+   ```python
+   CONFIG = {
+       # ... other settings ...
+       'slack': {
+           'enabled': False,  # Set to True to enable
+           'bot_token': 'xoxb-your-bot-token-here',
+           'channel_id': 'GRZFEPVDE'  # Your channel ID
+       }
+   }
+   ```
+
+6. **Enable via Dashboard**:
+   - Log in to the web dashboard
+   - Open "Settings" panel
+   - Toggle "Slack Notifications" to Enabled
+   - All activity log entries will now be sent to Slack
+
+#### Finding Your Channel ID
+
+To find your Slack channel ID:
+1. Right-click the channel name in Slack
+2. Select "View channel details"
+3. Scroll to the bottom - the Channel ID is shown there
+
+#### Disabling Notifications
+
+You can disable Slack notifications in two ways:
+- **Dashboard**: Toggle "Slack Notifications" to Disabled in Settings
+- **Config file**: Set `'enabled': False` in config.py
 
 ### Change Login Credentials
 

@@ -16,6 +16,8 @@ from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from functools import wraps
 from config import CONFIG
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
 # GPIO Pin Configuration
 BUTTON_PIN_ON = 23
@@ -34,6 +36,7 @@ socketio_instance = None
 activity_log = None
 led_controller = None
 wifi_scheduler = None
+slack_notifier = None
 # Thread-safe queue for cross-thread SocketIO emits
 emit_queue = None
 
@@ -840,8 +843,13 @@ class ActivityLog:
         self._lock = threading.RLock()
         self._socketio = socketio
         self._log_file = log_file
+        self._slack_notifier = None
         # Load existing entries from file
         self._load_from_file()
+
+    def set_slack_notifier(self, slack_notifier):
+        """Set the Slack notifier for sending notifications"""
+        self._slack_notifier = slack_notifier
 
     def _load_from_file(self):
         """Load activity log entries from persistent storage"""
@@ -862,7 +870,7 @@ class ActivityLog:
         try:
             with self._lock:
                 entries_to_save = list(self._entries)
-            
+
             with open(self._log_file, 'w') as f:
                 json.dump(entries_to_save, f, indent=2)
         except Exception as e:
@@ -877,7 +885,7 @@ class ActivityLog:
             formatted_message = message
             if device_name:
                 formatted_message = f"{device_name}: {message}"
-            
+
             entry = {
                 'message': formatted_message,
                 'source': source,
@@ -895,6 +903,13 @@ class ActivityLog:
         except Exception as e:
             print(f"[ActivityLog] Error saving entry: {e}")
 
+        # Send Slack notification if enabled
+        if self._slack_notifier and entry:
+            try:
+                self._slack_notifier.send_notification(formatted_message)
+            except Exception as e:
+                print(f"[ActivityLog] Error sending Slack notification: {e}")
+
         # Broadcast to all clients OUTSIDE the lock
         # Use safe_emit for cross-thread safety with eventlet
         # This ensures emits from GPIO thread work correctly with eventlet
@@ -910,6 +925,93 @@ class ActivityLog:
         """Get all log entries"""
         with self._lock:
             return list(self._entries)
+
+
+class SlackNotifier:
+    """Manages Slack notifications for activity log entries"""
+
+    def __init__(self):
+        self._enabled = False
+        self._lock = threading.RLock()
+        self._client = None
+        self._channel_id = None
+        self._load_config()
+
+    def _load_config(self):
+        """Load Slack configuration from CONFIG"""
+        try:
+            slack_config = CONFIG.get('slack', {})
+            self._enabled = slack_config.get('enabled', False)
+            bot_token = slack_config.get('bot_token', '')
+            self._channel_id = slack_config.get('channel_id', '')
+
+            if self._enabled:
+                if not bot_token or bot_token == 'xoxb-your-bot-token-here':
+                    print("[SlackNotifier] Slack enabled but bot_token not configured properly")
+                    self._enabled = False
+                elif not self._channel_id:
+                    print("[SlackNotifier] Slack enabled but channel_id not configured")
+                    self._enabled = False
+                else:
+                    self._client = WebClient(token=bot_token)
+                    print(f"[SlackNotifier] Initialized (enabled: {self._enabled}, channel: {self._channel_id})")
+            else:
+                print("[SlackNotifier] Slack notifications disabled")
+        except Exception as e:
+            print(f"[SlackNotifier] Error loading config: {e}")
+            self._enabled = False
+
+    def is_enabled(self):
+        """Check if Slack notifications are enabled"""
+        with self._lock:
+            return self._enabled
+
+    def enable(self):
+        """Enable Slack notifications"""
+        with self._lock:
+            self._enabled = True
+            CONFIG['slack']['enabled'] = True
+            print("[SlackNotifier] Slack notifications enabled")
+
+    def disable(self):
+        """Disable Slack notifications"""
+        with self._lock:
+            self._enabled = False
+            CONFIG['slack']['enabled'] = False
+            print("[SlackNotifier] Slack notifications disabled")
+
+    def send_notification(self, message):
+        """Send a notification to Slack channel"""
+        with self._lock:
+            if not self._enabled:
+                return
+
+            if not self._client or not self._channel_id:
+                print("[SlackNotifier] Cannot send notification: client or channel not configured")
+                return
+
+            try:
+                # Send message in a background thread to avoid blocking
+                threading.Thread(
+                    target=self._send_message_thread,
+                    args=(message,),
+                    daemon=True
+                ).start()
+            except Exception as e:
+                print(f"[SlackNotifier] Error starting notification thread: {e}")
+
+    def _send_message_thread(self, message):
+        """Send message to Slack in a background thread"""
+        try:
+            response = self._client.chat_postMessage(
+                channel=self._channel_id,
+                text=message
+            )
+            print(f"[SlackNotifier] Message sent successfully: {message}")
+        except SlackApiError as e:
+            print(f"[SlackNotifier] Slack API error: {e.response['error']}")
+        except Exception as e:
+            print(f"[SlackNotifier] Error sending message: {e}")
 
 
 # ============================================================================
@@ -1075,7 +1177,8 @@ def handle_connect():
     emit('current_settings', {
         'auto_off_duration_minutes': CONFIG['auto_off']['duration_minutes'],
         'ssh_enabled': CONFIG['ssh'].get('enabled', True),
-        'device_name': CONFIG.get('device', {}).get('name', '')
+        'device_name': CONFIG.get('device', {}).get('name', ''),
+        'slack_enabled': slack_notifier.is_enabled() if slack_notifier else False
     })
 
     # Send LED brightness settings
@@ -1254,6 +1357,46 @@ def handle_update_device_name(data):
     except Exception as e:
         emit('ssh_error', {
             'error': f'Failed to save device name: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        })
+
+
+@socketio.on('toggle_slack_notifications')
+def handle_toggle_slack_notifications(data):
+    """Toggle Slack notifications on/off"""
+    global slack_notifier
+
+    enabled = data.get('enabled', False)
+    print(f"[SocketIO] Toggle Slack notifications: {enabled}")
+
+    if not slack_notifier:
+        emit('ssh_error', {
+            'error': 'Slack notifier not initialized',
+            'timestamp': datetime.now().isoformat()
+        })
+        return
+
+    try:
+        if enabled:
+            slack_notifier.enable()
+        else:
+            slack_notifier.disable()
+
+        # Save to file with proper Python formatting (preserves True/False/None)
+        save_config_to_file(CONFIG, 'config.py')
+
+        # Add to activity log
+        if activity_log:
+            status_text = "enabled" if enabled else "disabled"
+            activity_log.add_entry(f"Slack notifications {status_text}", source="dashboard")
+
+        # Broadcast settings update to all clients
+        socketio.emit('settings_updated', {
+            'slack_enabled': enabled
+        }, namespace='/')
+    except Exception as e:
+        emit('ssh_error', {
+            'error': f'Failed to update Slack settings: {str(e)}',
             'timestamp': datetime.now().isoformat()
         })
 
@@ -1625,7 +1768,7 @@ def signal_handler(sig, frame):
 
 def main():
     """Main application entry point"""
-    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue, auth_token_manager, led_controller, wifi_scheduler
+    global state_manager, cooldown_manager, auto_off_timer, ssh_controller, socketio_instance, activity_log, emit_queue, auth_token_manager, led_controller, wifi_scheduler, slack_notifier
 
     print("=" * 60)
     print("WiFi Controller Dashboard")
@@ -1638,8 +1781,12 @@ def main():
     auth_token_manager = AuthTokenManager(device_file='trusted_devices.json')
     print("[Main] Device fingerprinting authentication initialized")
 
+    # Initialize Slack notifier
+    slack_notifier = SlackNotifier()
+
     # Initialize components
     activity_log = ActivityLog(max_entries=25, socketio=socketio)
+    activity_log.set_slack_notifier(slack_notifier)
 
     # Initialize LED controller
     led_controller = LEDController(settings_file='led_settings.json')
@@ -1666,6 +1813,12 @@ def main():
         print("[Main] SSH: ENABLED - Will execute commands on router")
     else:
         print("[Main] SSH: DISABLED (Test Mode) - Commands will be logged but not executed")
+
+    # Display Slack status
+    if slack_notifier.is_enabled():
+        print("[Main] Slack: ENABLED - Notifications will be sent for activity logs")
+    else:
+        print("[Main] Slack: DISABLED - No notifications will be sent")
 
     socketio_instance = socketio
 
