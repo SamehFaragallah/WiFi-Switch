@@ -1602,15 +1602,8 @@ def gpio_loop():
                         # Turn WiFi ON
                         if state_manager.set_state(True, source='gpio'):
                             success, message = ssh_controller.set_wifi_on()
-                            if not success and socketio_instance:
-                                safe_emit_from_thread(
-                                    socketio_instance,
-                                    'ssh_error',
-                                    {
-                                        'error': f'Failed to turn WiFi ON: {message}',
-                                        'timestamp': datetime.now().isoformat()
-                                    }
-                                )
+                            if not success:
+                                log_error(f'Failed to turn WiFi ON: {message}')
 
                             # Start auto-off timer
                             if CONFIG['auto_off']['enabled']:
@@ -1632,15 +1625,8 @@ def gpio_loop():
                         # Turn WiFi OFF
                         if state_manager.set_state(False, source='gpio'):
                             success, message = ssh_controller.set_wifi_off()
-                            if not success and socketio_instance:
-                                safe_emit_from_thread(
-                                    socketio_instance,
-                                    'ssh_error',
-                                    {
-                                        'error': f'Failed to turn WiFi OFF: {message}',
-                                        'timestamp': datetime.now().isoformat()
-                                    }
-                                )
+                            if not success:
+                                log_error(f'Failed to turn WiFi OFF: {message}')
 
                             # Cancel auto-off timer
                             auto_off_timer.cancel()
