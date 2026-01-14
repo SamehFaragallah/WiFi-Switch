@@ -5,3 +5,4 @@ Flask-CORS>=4.0.0
 paramiko>=3.0.0
 python-socketio>=5.8.0
 eventlet>=0.33.0
+slack-sdk>=3.19.0
