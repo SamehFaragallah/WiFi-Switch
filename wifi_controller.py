@@ -935,18 +935,30 @@ def log_error(error_message, emit_to_client=True):
         error_message: The error message to log
         emit_to_client: Whether to emit ssh_error event to the client (default True)
     """
-    global activity_log
+    global activity_log, socketio
 
     # Log to activity log (which will send to Slack if enabled)
     if activity_log:
         activity_log.add_entry(f"ERROR: {error_message}", source="system")
 
-    # Also emit to client if requested
-    if emit_to_client:
-        emit('ssh_error', {
-            'error': error_message,
-            'timestamp': datetime.now().isoformat()
-        })
+    # Also emit to client if requested (using safe_emit for cross-thread safety)
+    if emit_to_client and socketio:
+        try:
+            # Try direct emit first (if we're in a SocketIO handler)
+            emit('ssh_error', {
+                'error': error_message,
+                'timestamp': datetime.now().isoformat()
+            })
+        except:
+            # Fall back to safe_emit_from_thread (for other contexts)
+            safe_emit_from_thread(
+                socketio,
+                'ssh_error',
+                {
+                    'error': error_message,
+                    'timestamp': datetime.now().isoformat()
+                }
+            )
 
 
 class SlackNotifier:
