@@ -1,0 +1,11 @@
+cd Desktop
+git clone https://github.com/SamehFaragallah/WiFi-Switch
+cd WiFi-Switch
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# COPY THE CONFIG FILE
+
+chmod +x install_cloudflare_tunnel.sh
+sudo ./install_cloudflare_tunnel.sh
