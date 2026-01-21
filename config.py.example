@@ -44,5 +44,7 @@ CONFIG = {
     },
     'device': {
         'name': 'Unnamed WiFi Switch',
+        'description': 'Description of new WiFi Switch',
+        'authorization_token':'REST-API-2-token'
     }
 }

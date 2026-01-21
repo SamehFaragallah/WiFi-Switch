@@ -10,6 +10,7 @@ import sys
 import os
 
 import requests
+from config import CONFIG
 
 # ============================================================================
 # Configuration
@@ -51,11 +52,16 @@ def on_tunnel_ready(tunnel_url):
         print(f"❌ Error saving URL to file: {e}")
 
     data = {
-        "deviceId": "5864",
-        "newURL": tunnel_url
+        "deviceId": CONFIG['device']['device_id'],
+        "newURL": tunnel_url,
+        "action": "updateTunnelURL"
     }
 
-    res = requests.post('https://rock.lcbcchurch.com/Webhooks/Lava.ashx/WiFiSwitchAPI', json=data)
+    headers = {
+        'Authorization-Token': CONFIG['device']['authorization_token']
+    }
+
+    res = requests.post('https://rock.lcbcchurch.com/Webhooks/Lava.ashx/WiFiSwitchAPI', data=data, headers=headers)
     print(json.dumps(res.json(), indent=4))
 
     # Example: Send to a webhook (uncomment and customize)
