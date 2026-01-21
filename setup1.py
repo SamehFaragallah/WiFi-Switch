@@ -17,7 +17,7 @@ res = requests.post('https://rock.lcbcchurch.com/Webhooks/Lava.ashx/WiFiSwitchAP
 
 print(json.dumps(res.json(), indent=2))
 
-CONFIG['device']['device_id'] = res.json().get('deviceId', CONFIG['device']['device_id'])
+CONFIG['device']['device_id'] = res.json().get('deviceId', '')
 
 
 def format_python_value(value, indent_level=0):
