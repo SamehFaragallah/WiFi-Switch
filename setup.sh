@@ -40,7 +40,7 @@ chmod +x "$SCRIPT_DIR/setup1.py"
 
 # Execute the Python script using venv
 echo "🐍 Running setup1.py..."
-"$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/setup1.py"
+"$SCRIPT_DIR/venv/bin/python" "$SCRIPT_DIR/setup1.py"
 
 
 
