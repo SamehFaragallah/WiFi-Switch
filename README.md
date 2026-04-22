@@ -98,7 +98,7 @@ Visit `http://raspberry-pi-ip:5000` in your browser.
 
 **Login Credentials:**
 - Username: `digitaladmin`
-- Password: `WeWillRockyou!`
+- Password: `********`
 
 Press `Ctrl+C` to stop.
 
@@ -150,7 +150,7 @@ sudo journalctl -u wifi-controller.service -f
 ### Web Dashboard
 
 1. Open browser and navigate to: `http://raspberry-pi-ip:5000`
-2. Login with credentials (username: `digitaladmin`, password: `WeWillRockyou!`)
+2. Login with credentials (username: `digitaladmin`, password: `********`)
 3. Use the toggle button to turn WiFi ON/OFF
 4. View auto-off countdown when WiFi is ON
 5. Adjust auto-off duration in Settings panel
